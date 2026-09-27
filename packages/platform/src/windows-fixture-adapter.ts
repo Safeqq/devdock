@@ -86,7 +86,9 @@ export class WindowsFixtureProcessAdapter implements ProcessAdapter {
   async requestGracefulStop(handle: ManagedProcessHandle): Promise<StopRequestResult> {
     const owned = this.#owned.get(handle);
     if (owned === undefined) return "ownership_unknown";
-    if ((await this.inspectOwnership(handle)) === "exited") return "already_exited";
+    const ownership = await this.inspectOwnership(handle);
+    if (ownership === "unknown") return "ownership_unknown";
+    if (ownership === "exited") return "already_exited";
     if (!owned.child.connected) return "unsupported";
 
     try {
@@ -105,23 +107,26 @@ export class WindowsFixtureProcessAdapter implements ProcessAdapter {
     return "unsupported";
   }
 
-  async waitForExit(handle: ManagedProcessHandle, timeoutMs: number): Promise<WaitForExitResult> {
+  async waitForExit(handle: ManagedProcessHandle, timeoutMs?: number): Promise<WaitForExitResult> {
     const owned = this.#owned.get(handle);
     if (owned === undefined)
       return { kind: "unknown", reason: "Handle is not owned by this adapter" };
     if (owned.closed !== undefined) return { kind: "exited", ...owned.closed };
 
     return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        owned.child.off("close", onClose);
-        resolve(
-          owned.error === undefined
-            ? { kind: "timeout" }
-            : { kind: "unknown", reason: "Child process emitted an error" },
-        );
-      }, timeoutMs);
+      const timer =
+        timeoutMs === undefined
+          ? undefined
+          : setTimeout(() => {
+              owned.child.off("close", onClose);
+              resolve(
+                owned.error === undefined
+                  ? { kind: "timeout" }
+                  : { kind: "unknown", reason: "Child process emitted an error" },
+              );
+            }, timeoutMs);
       const onClose = (code: number | null, signal: string | null) => {
-        clearTimeout(timer);
+        if (timer !== undefined) clearTimeout(timer);
         resolve({ kind: "exited", code, signal });
       };
       owned.child.once("close", onClose);

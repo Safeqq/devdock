@@ -7,6 +7,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@devdock/contracts": "0.0.0",
     "@devdock/platform": "0.0.0"
   }
 }

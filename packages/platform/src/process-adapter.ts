@@ -39,5 +39,5 @@ export interface ProcessAdapter {
   inspectOwnership(handle: ManagedProcessHandle): Promise<OwnershipInspection>;
   requestGracefulStop(handle: ManagedProcessHandle): Promise<StopRequestResult>;
   terminateOwnedTree(handle: ManagedProcessHandle): Promise<StopRequestResult>;
-  waitForExit(handle: ManagedProcessHandle, timeoutMs: number): Promise<WaitForExitResult>;
+  waitForExit(handle: ManagedProcessHandle, timeoutMs?: number): Promise<WaitForExitResult>;
 }

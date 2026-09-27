@@ -75,7 +75,7 @@ function createEventReader(child) {
   };
 }
 
-test("Windows fixture CLI starts, inspects, and stops its process", {
+test("Windows fixture CLI reuses a run, restarts it, and stops the replacement", {
   skip: process.platform !== "win32" ? "Windows adapter only" : false,
   timeout: 15_000,
 }, async () => {
@@ -102,15 +102,30 @@ test("Windows fixture CLI starts, inspects, and stops its process", {
 
     child.stdin.write("inspect\n");
     const inspection = await events.next("inspection");
-    assert.equal(inspection.status, "owned");
+    assert.equal(inspection.status, "running");
+    assert.equal(inspection.ownership, "owned");
     assert.equal(inspection.runId, started.runId);
     assert.equal(inspection.pid, started.pid);
 
+    child.stdin.write("start\n");
+    const existing = await events.next("started");
+    assert.equal(existing.existing, true);
+    assert.equal(existing.runId, started.runId);
+
+    child.stdin.write("restart\n");
+    const restarted = await events.next("started");
+    assert.equal(restarted.existing, false);
+    assert.notEqual(restarted.runId, started.runId);
+    const listeningAgain = await events.next("listening");
+    const replacementUrl = `http://127.0.0.1:${listeningAgain.port}/ready`;
+    assert.equal((await fetch(replacementUrl, { signal: AbortSignal.timeout(3_000) })).status, 200);
+    await assert.rejects(fetch(url, { signal: AbortSignal.timeout(1_000) }));
+
     child.stdin.write("stop\n");
     const stopped = await events.next("stopped");
-    assert.equal(stopped.runId, started.runId);
+    assert.equal(stopped.runId, restarted.runId);
     assert.equal(stopped.code, 0, stderr);
-    await assert.rejects(fetch(url, { signal: AbortSignal.timeout(1_000) }));
+    await assert.rejects(fetch(replacementUrl, { signal: AbortSignal.timeout(1_000) }));
 
     child.stdin.write("inspect\nexit\n");
     const afterStop = await events.next("inspection");

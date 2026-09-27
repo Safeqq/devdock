@@ -1,9 +1,9 @@
-import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { dirname } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
-import { type ManagedProcessHandle, WindowsFixtureProcessAdapter } from "@devdock/platform";
+import { WindowsFixtureProcessAdapter } from "@devdock/platform";
+import { SingleServiceSupervisor, type StartOutcome } from "./single-service-supervisor.js";
 
 const fixturePath = fileURLToPath(
   new URL("../../../tests/fixtures/http-server.mjs", import.meta.url),
@@ -18,83 +18,94 @@ async function main(): Promise<void> {
     throw new Error("Fixture control is currently available only on native Windows");
   }
 
-  const adapter = new WindowsFixtureProcessAdapter();
   const canonicalCwd = await realpath(dirname(fixturePath));
+  const supervisor = new SingleServiceSupervisor(new WindowsFixtureProcessAdapter(), {
+    executable: process.execPath,
+    args: [fixturePath],
+    canonicalCwd,
+    env: { PORT: "0" },
+  });
   const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
-  let active: ManagedProcessHandle | undefined;
+
+  function reportStart(outcome: StartOutcome): void {
+    if (outcome.kind === "failed" || outcome.kind === "rejected") {
+      emit({ type: "error", code: outcome.reason, snapshot: outcome.snapshot });
+      return;
+    }
+    const { snapshot } = outcome;
+    if (outcome.kind === "started") {
+      const streams = supervisor.streamsFor(snapshot.runId);
+      streams?.stdout.pipe(process.stdout, { end: false });
+      streams?.stderr.pipe(process.stderr, { end: false });
+    }
+    emit({
+      type: "started",
+      existing: outcome.kind === "existing",
+      runId: snapshot.runId,
+      pid: snapshot.pid,
+      processState: snapshot.processState,
+      readinessState: snapshot.readinessState,
+    });
+  }
 
   async function stop(): Promise<void> {
-    const handle = active;
-    if (handle === undefined) {
-      emit({ type: "stopped", alreadyStopped: true });
-      return;
-    }
-
-    const request = await adapter.requestGracefulStop(handle);
-    if (request !== "requested" && request !== "already_exited") {
+    const outcome = await supervisor.stop();
+    if (outcome.kind === "incomplete") {
       process.exitCode = 1;
-      emit({ type: "error", code: "STOP_UNAVAILABLE", reason: request, runId: handle.runId });
+      emit({
+        type: "error",
+        code: "STOP_UNCONFIRMED",
+        reason: outcome.reason,
+        snapshot: outcome.snapshot,
+      });
       return;
     }
-
-    const result = await adapter.waitForExit(handle, 3_000);
-    if (result.kind === "exited") {
-      active = undefined;
-      emit({ type: "stopped", runId: handle.runId, code: result.code, signal: result.signal });
-      return;
-    }
-
-    const fallback = await adapter.terminateOwnedTree(handle);
-    process.exitCode = 1;
-    emit({ type: "error", code: "STOP_UNCONFIRMED", reason: result.kind, fallback });
+    emit({
+      type: "stopped",
+      alreadyStopped: outcome.kind === "already_stopped",
+      runId: outcome.snapshot?.runId,
+      code: outcome.snapshot?.exitCode,
+      processState: outcome.snapshot?.processState,
+    });
   }
 
   process.once("SIGINT", () => input.close());
   process.once("SIGTERM", () => input.close());
-  emit({ type: "ready", commands: ["start", "inspect", "stop", "exit"] });
+  emit({ type: "ready", commands: ["start", "inspect", "stop", "restart", "exit"] });
 
   try {
     for await (const line of input) {
       const command = line.trim();
       if (command === "start") {
-        if (active !== undefined) {
-          const ownership = await adapter.inspectOwnership(active);
-          if (ownership === "owned") {
-            emit({ type: "started", existing: true, runId: active.runId, pid: active.pid });
-            continue;
-          }
-          if (ownership === "unknown") {
-            emit({ type: "error", code: "OWNERSHIP_UNKNOWN", runId: active.runId });
-            continue;
-          }
-          active = undefined;
-        }
-
-        const handle = await adapter.start({
-          runId: randomUUID(),
-          executable: process.execPath,
-          args: [fixturePath],
-          canonicalCwd,
-          env: { PORT: "0" },
-        });
-        active = handle;
-        handle.stdout.pipe(process.stdout, { end: false });
-        handle.stderr.pipe(process.stderr, { end: false });
-        emit({ type: "started", existing: false, runId: handle.runId, pid: handle.pid });
+        reportStart(await supervisor.start());
       } else if (command === "inspect") {
-        if (active === undefined) {
-          emit({ type: "inspection", status: "stopped" });
-        } else {
-          emit({
-            type: "inspection",
-            status: await adapter.inspectOwnership(active),
-            runId: active.runId,
-            pid: active.pid,
-            gracefulStop: active.gracefulStop,
-          });
-        }
+        const { snapshot, ownership } = await supervisor.inspect();
+        emit({
+          type: "inspection",
+          status: snapshot?.processState ?? "stopped",
+          ownership,
+          runId: snapshot?.runId,
+          pid: snapshot?.pid,
+          readinessState: snapshot?.readinessState ?? "unknown",
+          reconciliationState: snapshot?.reconciliationState ?? "known",
+          exitCode: snapshot?.exitCode,
+          failureReason: snapshot?.failureReason,
+        });
       } else if (command === "stop") {
         await stop();
+      } else if (command === "restart") {
+        const outcome = await supervisor.restart();
+        if (outcome.kind === "incomplete") {
+          process.exitCode = 1;
+          emit({
+            type: "error",
+            code: "RESTART_BLOCKED",
+            reason: outcome.reason,
+            snapshot: outcome.snapshot,
+          });
+        } else {
+          reportStart(outcome);
+        }
       } else if (command === "exit") {
         input.close();
         break;
@@ -103,7 +114,16 @@ async function main(): Promise<void> {
       }
     }
   } finally {
-    if (active !== undefined) await stop();
+    const outcome = await supervisor.stop();
+    if (outcome.kind === "incomplete") {
+      process.exitCode = 1;
+      emit({
+        type: "error",
+        code: "STOP_UNCONFIRMED",
+        reason: outcome.reason,
+        snapshot: outcome.snapshot,
+      });
+    }
     input.close();
   }
 }

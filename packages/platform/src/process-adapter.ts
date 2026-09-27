@@ -24,7 +24,11 @@ export interface ManagedProcessHandle {
 }
 
 export type OwnershipInspection = "owned" | "exited" | "unknown";
-export type StopRequestResult = "requested" | "already_exited" | "ownership_unknown";
+export type StopRequestResult =
+  | "requested"
+  | "already_exited"
+  | "ownership_unknown"
+  | "unsupported";
 export type WaitForExitResult =
   | { readonly kind: "exited"; readonly code: number | null; readonly signal: string | null }
   | { readonly kind: "timeout" }

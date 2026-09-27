@@ -46,6 +46,7 @@ process.on("message", (message) => {
 });
 process.once("SIGINT", close);
 process.once("SIGTERM", close);
+process.once("disconnect", close);
 server.once("error", (error) => {
   console.error(error);
   process.exitCode = 1;

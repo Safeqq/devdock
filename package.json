@@ -1,0 +1,31 @@
+{
+  "name": "devdock",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local dashboard for developer services",
+  "packageManager": "npm@11.19.0",
+  "engines": {
+    "node": "24.21.0",
+    "npm": "11.19.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "check:toolchain": "node scripts/check-toolchain.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "biome check packages/contracts/src packages/platform/src scripts tests package.json biome.json tsconfig.json packages/contracts/package.json packages/platform/package.json packages/contracts/tsconfig.json packages/platform/tsconfig.json",
+    "test:unit": "npm run build && node scripts/run-tests.mjs unit",
+    "test:integration": "node scripts/run-tests.mjs integration",
+    "test:browser": "node scripts/run-tests.mjs browser",
+    "build": "npm run build -w @devdock/contracts && npm run build -w @devdock/platform",
+    "fixture:http": "node tests/fixtures/http-server.mjs"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "@types/node": "24.19.0",
+    "typescript": "6.0.3"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "@devdock/platform",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/process-adapter.d.ts",
+      "default": "./dist/process-adapter.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  }
+}

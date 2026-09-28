@@ -23,7 +23,8 @@
     "build": "npm run build -w @devdock/contracts && npm run build -w @devdock/platform && npm run build -w @devdock/storage && npm run build -w @devdock/daemon",
     "fixture:http": "node tests/fixtures/http-server.mjs",
     "fixture:tree": "node tests/fixtures/tree-parent.mjs",
-    "fixture:control": "npm run build && node apps/daemon/dist/cli.js"
+    "fixture:control": "npm run build && node apps/daemon/dist/cli.js",
+    "api:auth": "npm run build && node apps/daemon/dist/api-cli.js"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",

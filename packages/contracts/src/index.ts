@@ -104,3 +104,7 @@ export const AppSettingsSchema = z.strictObject({
   logLineLimit: z.number().int().min(100).max(5_000).default(5_000),
 });
 export type AppSettings = z.infer<typeof AppSettingsSchema>;
+
+export const PairingRequestSchema = z.strictObject({
+  code: z.string().min(1).max(128),
+});

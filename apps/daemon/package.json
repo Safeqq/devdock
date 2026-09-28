@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@devdock/contracts": "0.0.0",
-    "@devdock/platform": "0.0.0"
+    "@devdock/platform": "0.0.0",
+    "@devdock/storage": "0.0.0"
   }
 }

@@ -15,13 +15,14 @@
   ],
   "scripts": {
     "check:toolchain": "node scripts/check-toolchain.mjs",
-    "typecheck": "npm run build -w @devdock/contracts && npm run build -w @devdock/platform && tsc --noEmit -p tsconfig.json",
-    "lint": "biome check apps/daemon/src packages/contracts/src packages/platform/src scripts tests package.json biome.json tsconfig.json apps/daemon/package.json apps/daemon/tsconfig.json packages/contracts/package.json packages/platform/package.json packages/contracts/tsconfig.json packages/platform/tsconfig.json",
+    "typecheck": "npm run build -w @devdock/contracts && npm run build -w @devdock/platform && npm run build -w @devdock/storage && tsc --noEmit -p tsconfig.json",
+    "lint": "biome check apps/daemon/src packages/contracts/src packages/platform/src packages/storage/src scripts tests package.json biome.json tsconfig.json apps/daemon/package.json apps/daemon/tsconfig.json packages/contracts/package.json packages/platform/package.json packages/storage/package.json packages/contracts/tsconfig.json packages/platform/tsconfig.json packages/storage/tsconfig.json",
     "test:unit": "npm run build && node scripts/run-tests.mjs unit",
     "test:integration": "npm run build && node scripts/run-tests.mjs integration",
     "test:browser": "node scripts/run-tests.mjs browser",
-    "build": "npm run build -w @devdock/contracts && npm run build -w @devdock/platform && npm run build -w @devdock/daemon",
+    "build": "npm run build -w @devdock/contracts && npm run build -w @devdock/platform && npm run build -w @devdock/storage && npm run build -w @devdock/daemon",
     "fixture:http": "node tests/fixtures/http-server.mjs",
+    "fixture:tree": "node tests/fixtures/tree-parent.mjs",
     "fixture:control": "npm run build && node apps/daemon/dist/cli.js"
   },
   "devDependencies": {

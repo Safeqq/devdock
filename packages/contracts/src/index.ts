@@ -3,6 +3,20 @@ import { z } from "zod";
 const identifier = z.string().min(1).max(128);
 const timeoutMs = z.number().int().positive().max(60_000);
 
+export const NpmScriptNameSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .refine(
+    (name) =>
+      [...name].every((character) => {
+        const codePoint = character.codePointAt(0);
+        return codePoint !== undefined && codePoint > 31 && codePoint !== 127;
+      }),
+    "Script names cannot contain control characters",
+  )
+  .refine((name) => !name.startsWith("-"), "Script names cannot start with '-'");
+
 export const ProcessStateSchema = z.enum([
   "stopped",
   "starting",
@@ -24,7 +38,7 @@ export const ServiceConfigSchema = z
     id: identifier,
     projectId: identifier,
     displayName: z.string().trim().min(1).max(128),
-    scriptName: z.string().min(1).max(128),
+    scriptName: NpmScriptNameSchema,
     cwd: z.strictObject({
       displayPath: z.string().min(1),
       canonicalPath: z.string().min(1),
@@ -61,3 +75,32 @@ export const RunSnapshotSchema = z.strictObject({
   failureReason: z.string().max(512).optional(),
 });
 export type RunSnapshot = z.infer<typeof RunSnapshotSchema>;
+
+export const ProjectRecordSchema = z.strictObject({
+  id: identifier,
+  displayName: z.string().trim().min(1).max(128),
+  path: z.strictObject({
+    displayPath: z.string().min(1),
+    canonicalPath: z.string().min(1),
+  }),
+  createdAt: z.iso.datetime({ offset: true }),
+  archivedAt: z.iso.datetime({ offset: true }).optional(),
+});
+export type ProjectRecord = z.infer<typeof ProjectRecordSchema>;
+
+export const ScriptDiscoverySchema = z.strictObject({
+  cwd: z.strictObject({
+    displayPath: z.string().min(1),
+    canonicalPath: z.string().min(1),
+  }),
+  packageName: z.string().max(214).optional(),
+  scriptNames: z.array(NpmScriptNameSchema),
+  unsupportedScriptCount: z.number().int().nonnegative(),
+});
+export type ScriptDiscovery = z.infer<typeof ScriptDiscoverySchema>;
+
+export const AppSettingsSchema = z.strictObject({
+  theme: z.enum(["system", "light", "dark"]).default("system"),
+  logLineLimit: z.number().int().min(100).max(5_000).default(5_000),
+});
+export type AppSettings = z.infer<typeof AppSettingsSchema>;

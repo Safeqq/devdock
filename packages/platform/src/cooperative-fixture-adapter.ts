@@ -15,12 +15,17 @@ interface OwnedFixture {
   error?: Error;
 }
 
-export class WindowsFixtureProcessAdapter implements ProcessAdapter {
+abstract class CooperativeFixtureProcessAdapter implements ProcessAdapter {
   readonly #owned = new WeakMap<ManagedProcessHandle, OwnedFixture>();
+  readonly #supportedPlatforms: readonly NodeJS.Platform[];
+
+  protected constructor(supportedPlatforms: readonly NodeJS.Platform[]) {
+    this.#supportedPlatforms = supportedPlatforms;
+  }
 
   async start(request: SpawnRequest): Promise<ManagedProcessHandle> {
-    if (process.platform !== "win32") {
-      throw new Error("The Windows fixture adapter requires native Windows");
+    if (!this.#supportedPlatforms.includes(process.platform)) {
+      throw new Error(`The fixture adapter requires ${this.#supportedPlatforms.join(" or ")}`);
     }
 
     const child = spawn(request.executable, [...request.args], {
@@ -131,5 +136,17 @@ export class WindowsFixtureProcessAdapter implements ProcessAdapter {
       };
       owned.child.once("close", onClose);
     });
+  }
+}
+
+export class WindowsFixtureProcessAdapter extends CooperativeFixtureProcessAdapter {
+  constructor() {
+    super(["win32"]);
+  }
+}
+
+export class PosixFixtureProcessAdapter extends CooperativeFixtureProcessAdapter {
+  constructor() {
+    super(["darwin", "linux"]);
   }
 }

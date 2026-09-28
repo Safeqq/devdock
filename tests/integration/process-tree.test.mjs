@@ -5,6 +5,7 @@ import { dirname } from "node:path";
 import { createInterface } from "node:readline";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { RunLogBuffer } from "../../apps/daemon/dist/run-log-buffer.js";
 import { SingleServiceSupervisor } from "../../apps/daemon/dist/single-service-supervisor.js";
 import {
   PosixFixtureProcessAdapter,
@@ -110,8 +111,9 @@ test("owned fixture tree stops while an external Node sentinel stays alive", {
     assert.equal(started.kind, "started");
     const streams = supervisor.streamsFor(started.snapshot.runId);
     assert.ok(streams);
+    const logs = new RunLogBuffer("test-daemon-session", started.snapshot.runId);
+    logs.capture(streams.stdout, streams.stderr);
     treeEvents = eventReader(streams.stdout);
-    streams.stderr.resume();
     const treeReady = await treeEvents.next("tree-listening");
     assert.equal(treeReady.parentPid, started.snapshot.pid);
     assert.ok(treeReady.childPid > 0);
@@ -126,6 +128,13 @@ test("owned fixture tree stops while an external Node sentinel stays alive", {
     const childClosed = await treeEvents.next("tree-child-closed");
     assert.equal(childClosed.childPid, treeReady.childPid);
     assert.equal(childClosed.code, 0);
+    assert.ok(
+      logs
+        .replay()
+        .events.some(
+          ({ stream, text }) => stream === "stdout" && text.includes('"type":"tree-child-closed"'),
+        ),
+    );
     await assert.rejects(fetch(treeUrl, { signal: AbortSignal.timeout(1_000) }));
     assert.equal((await fetch(sentinelUrl, { signal: AbortSignal.timeout(3_000) })).status, 200);
     assert.equal(hasExited(sentinel), false);

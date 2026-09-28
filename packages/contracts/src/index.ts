@@ -76,6 +76,17 @@ export const RunSnapshotSchema = z.strictObject({
 });
 export type RunSnapshot = z.infer<typeof RunSnapshotSchema>;
 
+export const LogEventSchema = z.strictObject({
+  daemonSessionId: identifier,
+  runId: identifier,
+  sequence: z.number().int().positive().safe(),
+  timestamp: z.iso.datetime({ offset: true }),
+  type: z.literal("log"),
+  stream: z.enum(["stdout", "stderr"]),
+  text: z.string().max(16_384),
+});
+export type LogEvent = z.infer<typeof LogEventSchema>;
+
 export const ProjectRecordSchema = z.strictObject({
   id: identifier,
   displayName: z.string().trim().min(1).max(128),

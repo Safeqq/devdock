@@ -134,7 +134,7 @@ test("local API guards pairing, sessions, CSRF, Host/Origin, and SSE", {
 
 test("pairing attempts and session expiry are bounded", { timeout: 10_000 }, async () => {
   let currentTime = Date.now();
-  const api = createLocalApiServer(() => currentTime);
+  const api = createLocalApiServer({ now: () => currentTime });
   const origin = await api.listen(0);
   try {
     for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -145,7 +145,7 @@ test("pairing attempts and session expiry are bounded", { timeout: 10_000 }, asy
     await api.close();
   }
 
-  const another = createLocalApiServer(() => currentTime);
+  const another = createLocalApiServer({ now: () => currentTime });
   const secondOrigin = await another.listen(0);
   try {
     const paired = await pairRequest(secondOrigin, another.pairingCode);
@@ -161,7 +161,7 @@ test("pairing attempts and session expiry are bounded", { timeout: 10_000 }, asy
     await another.close();
   }
 
-  const expired = createLocalApiServer(() => currentTime);
+  const expired = createLocalApiServer({ now: () => currentTime });
   const thirdOrigin = await expired.listen(0);
   try {
     currentTime += 5 * 60_000;

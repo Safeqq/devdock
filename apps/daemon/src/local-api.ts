@@ -1,7 +1,15 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import type { ServerResponse } from "node:http";
+import { join } from "node:path";
 import { PairingRequestSchema } from "@devdock/contracts";
+import type { NpmLauncher } from "@devdock/platform";
+import { ProjectFileError } from "@devdock/platform";
+import { RegistryStorageError } from "@devdock/storage";
+import fastifyStatic from "@fastify/static";
 import fastify, { type FastifyRequest } from "fastify";
+import { type ProjectRegistry, ProjectRegistryError } from "./project-registry.js";
+import { registerProjectRoutes } from "./project-routes.js";
 
 const COOKIE_NAME = "devdock_session";
 const PAIRING_TTL_MS = 5 * 60_000;
@@ -43,7 +51,45 @@ function error(code: string, message: string) {
   return { error: { code, message } };
 }
 
-export function createLocalApiServer(now: () => number = Date.now) {
+export interface LocalApiOptions {
+  now?: () => number;
+  registry?: ProjectRegistry;
+  launcher?: NpmLauncher;
+  webRoot?: string;
+}
+
+function publicWebPath(method: string, url: string): boolean {
+  if (method !== "GET" && method !== "HEAD") return false;
+  return url === "/" || /^\/assets\/[A-Za-z0-9][A-Za-z0-9._-]*\.(?:js|css|svg|woff2)$/u.test(url);
+}
+
+function projectError(caught: unknown): { status: number; code: string; message: string } | null {
+  if (caught instanceof ProjectRegistryError) {
+    const status =
+      caught.code === "PROJECT_NOT_FOUND" || caught.code === "SERVICE_NOT_FOUND"
+        ? 404
+        : caught.code === "PROJECT_ARCHIVED" ||
+            caught.code === "PROJECT_IDENTITY_CHANGED" ||
+            caught.code === "OPEN_APP_PORT_UNCONFIGURED"
+          ? 409
+          : 400;
+    return { status, code: caught.code, message: caught.message };
+  }
+  if (caught instanceof ProjectFileError) {
+    const status = caught.code === "PACKAGE_NOT_FOUND" ? 404 : 400;
+    return { status, code: caught.code, message: caught.message };
+  }
+  if (caught instanceof RegistryStorageError && caught.code === "PROJECT_IDENTITY_CHANGED") {
+    return { status: 409, code: caught.code, message: caught.message };
+  }
+  return null;
+}
+
+export function createLocalApiServer(options: LocalApiOptions = {}) {
+  if ((options.registry === undefined) !== (options.launcher === undefined)) {
+    throw new Error("Registry and launcher must be configured together");
+  }
+  const now = options.now ?? Date.now;
   const app = fastify({ logger: false, bodyLimit: 1_024, trustProxy: false });
   const pairingCode = randomToken(16);
   const pairingExpiresAt = now() + PAIRING_TTL_MS;
@@ -68,6 +114,11 @@ export function createLocalApiServer(now: () => number = Date.now) {
     reply.header("cache-control", "no-store");
     reply.header("referrer-policy", "no-referrer");
     reply.header("x-content-type-options", "nosniff");
+    reply.header("x-frame-options", "DENY");
+    reply.header(
+      "content-security-policy",
+      "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+    );
     const origin = expectedOrigin();
     if (origin === null || request.headers.host !== origin.slice("http://".length)) {
       return reply.code(421).send(error("HOST_INVALID", "Request host is not allowed"));
@@ -80,6 +131,7 @@ export function createLocalApiServer(now: () => number = Date.now) {
     if (mutation && requestOrigin !== origin) {
       return reply.code(403).send(error("ORIGIN_REQUIRED", "A matching Origin header is required"));
     }
+    if (options.webRoot !== undefined && publicWebPath(request.method, request.url)) return;
     if (request.method === "POST" && request.url === "/api/pair") return;
     const authorized = currentSession(request);
     if (authorized === null) {
@@ -94,6 +146,11 @@ export function createLocalApiServer(now: () => number = Date.now) {
   });
 
   app.setErrorHandler((caught, _request, reply) => {
+    const known = projectError(caught);
+    if (known !== null) {
+      reply.code(known.status).send(error(known.code, known.message));
+      return;
+    }
     const status =
       typeof caught === "object" &&
       caught !== null &&
@@ -207,6 +264,23 @@ export function createLocalApiServer(now: () => number = Date.now) {
     }
     eventClients.clear();
   });
+
+  if (options.registry !== undefined && options.launcher !== undefined) {
+    registerProjectRoutes(app, options.registry, options.launcher);
+  }
+
+  if (options.webRoot !== undefined) {
+    const webRoot = options.webRoot;
+    app.get("/", async (_request, reply) => {
+      const html = await readFile(join(webRoot, "index.html"), "utf8");
+      return reply.type("text/html; charset=utf-8").send(html);
+    });
+    app.register(fastifyStatic, {
+      root: join(webRoot, "assets"),
+      prefix: "/assets/",
+      decorateReply: false,
+    });
+  }
 
   return {
     pairingCode,

@@ -1,0 +1,118 @@
+import assert from "node:assert/strict";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { isAbsolute, join } from "node:path";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { chromium } from "playwright-core";
+import { createLocalApiServer } from "../../apps/daemon/dist/local-api.js";
+import { ProjectRegistry } from "../../apps/daemon/dist/project-registry.js";
+import { NpmLauncher } from "../../packages/platform/dist/index.js";
+import { RegistryDatabase } from "../../packages/storage/dist/index.js";
+
+async function browserExecutable() {
+  const override = process.env.DEVDOCK_TEST_BROWSER;
+  const candidates = override
+    ? [override]
+    : process.platform === "win32"
+      ? [
+          process.env["ProgramFiles(x86)"] &&
+            join(
+              process.env["ProgramFiles(x86)"],
+              "Microsoft",
+              "Edge",
+              "Application",
+              "msedge.exe",
+            ),
+          process.env.ProgramFiles &&
+            join(process.env.ProgramFiles, "Microsoft", "Edge", "Application", "msedge.exe"),
+        ]
+      : process.platform === "darwin"
+        ? [
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+          ]
+        : ["/usr/bin/microsoft-edge", "/usr/bin/google-chrome", "/usr/bin/chromium"];
+  for (const candidate of candidates) {
+    if (!candidate || !isAbsolute(candidate)) continue;
+    try {
+      await access(candidate);
+      return candidate;
+    } catch {
+      // Try the next installed browser.
+    }
+  }
+  throw new Error(
+    "No supported system browser found; set DEVDOCK_TEST_BROWSER to an absolute Edge/Chrome path",
+  );
+}
+
+test("browser pairs and manages project configuration without executing a script", {
+  timeout: 35_000,
+}, async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "devdock-browser-"));
+  const projectPath = join(tempRoot, "browser café & [project]");
+  const markerPath = join(projectPath, "marker.out");
+  let store;
+  let api;
+  let browser;
+  try {
+    await mkdir(projectPath);
+    await writeFile(
+      join(projectPath, "package.json"),
+      JSON.stringify({ name: "browser-fixture", scripts: { dev: "node marker.mjs" } }),
+    );
+    await writeFile(
+      join(projectPath, "marker.mjs"),
+      "import { writeFileSync } from 'node:fs'; writeFileSync(new URL('./marker.out', import.meta.url), 'ran');",
+    );
+    store = await RegistryDatabase.open(join(tempRoot, "data", "registry.sqlite"));
+    api = createLocalApiServer({
+      registry: new ProjectRegistry(store),
+      launcher: await NpmLauncher.locate(),
+      webRoot: fileURLToPath(new URL("../../apps/web/dist/", import.meta.url)),
+    });
+    const origin = await api.listen(0);
+    browser = await chromium.launch({ executablePath: await browserExecutable(), headless: true });
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    const pageErrors = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+
+    await page.goto(origin);
+    await page.getByRole("heading", { name: "Pair this browser" }).waitFor();
+    assert.equal((await fetch(`${origin}/api/projects`)).status, 401);
+    await page.getByLabel("Pairing code").fill(api.pairingCode);
+    await page.getByRole("button", { name: "Pair browser" }).click();
+    await page.getByRole("heading", { name: "Projects" }).waitFor();
+    await page.getByLabel("Folder path").fill(projectPath);
+    await page.getByLabel("Display name (optional)").fill("Browser Fixture");
+    await page.getByRole("button", { name: "Add project" }).click();
+    await page.getByRole("heading", { name: "Browser Fixture" }).waitFor();
+    await page.getByLabel("App port (optional)").fill("4300");
+    await page.getByRole("button", { name: "Add service" }).click();
+    await page.getByRole("heading", { name: "dev" }).waitFor();
+    await page.getByRole("button", { name: "View command" }).click();
+    await page.locator(".preview pre").getByText(/"cwd"/u).waitFor();
+    await page.getByRole("button", { name: "Prepare Open App" }).click();
+    const openApp = page.getByRole("link", { name: /Open App/u });
+    await openApp.waitFor();
+    assert.equal(await openApp.getAttribute("href"), "http://127.0.0.1:4300/");
+    await assert.rejects(access(markerPath));
+
+    await page.reload();
+    await page.getByRole("heading", { name: "Browser Fixture" }).waitFor();
+    const unpairedPage = await (await browser.newContext()).newPage();
+    await unpairedPage.goto(origin);
+    await unpairedPage.getByRole("heading", { name: "Pair this browser" }).waitFor();
+    await page.getByRole("button", { name: "Archive" }).click();
+    await page.getByText("No projects yet.").waitFor();
+    await access(join(projectPath, "package.json"));
+    assert.deepEqual(pageErrors, []);
+  } finally {
+    await browser?.close();
+    await api?.close();
+    store?.close();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});

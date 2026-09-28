@@ -108,3 +108,40 @@ export type AppSettings = z.infer<typeof AppSettingsSchema>;
 export const PairingRequestSchema = z.strictObject({
   code: z.string().min(1).max(128),
 });
+
+export const RegistryIdSchema = z.uuid();
+
+export const RegisterProjectRequestSchema = z.strictObject({
+  path: z.string().min(1).max(4_096),
+  displayName: z.string().trim().min(1).max(128).optional(),
+});
+
+export const SelectServiceRequestSchema = z.strictObject({
+  scriptName: NpmScriptNameSchema,
+  cwd: z.string().min(1).max(4_096).optional(),
+  displayName: z.string().trim().min(1).max(128).optional(),
+  expectedPort: z.number().int().min(1).max(65_535).optional(),
+});
+
+export const SessionResponseSchema = z.strictObject({
+  csrfToken: z.string().min(32),
+  expiresAt: z.iso.datetime({ offset: true }),
+});
+export type SessionResponse = z.infer<typeof SessionResponseSchema>;
+
+export const ProjectListResponseSchema = z.strictObject({ projects: z.array(ProjectRecordSchema) });
+export const ProjectResponseSchema = z.strictObject({ project: ProjectRecordSchema });
+export const ProjectDetailResponseSchema = z.strictObject({
+  project: ProjectRecordSchema,
+  services: z.array(ServiceConfigSchema),
+});
+export const DiscoveryResponseSchema = z.strictObject({ discovery: ScriptDiscoverySchema });
+export const ServiceResponseSchema = z.strictObject({ service: ServiceConfigSchema });
+export const CommandPreviewResponseSchema = z.strictObject({
+  command: z.strictObject({
+    executable: z.string().min(1),
+    args: z.array(z.string()),
+    cwd: z.string().min(1),
+  }),
+});
+export const OpenAppResponseSchema = z.strictObject({ url: z.url() });

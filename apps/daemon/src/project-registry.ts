@@ -22,7 +22,8 @@ export class ProjectRegistryError extends Error {
       | "SCRIPT_NOT_FOUND"
       | "SCRIPT_NAME_INVALID"
       | "SERVICE_CONFIG_INVALID"
-      | "SERVICE_NOT_FOUND",
+      | "SERVICE_NOT_FOUND"
+      | "OPEN_APP_PORT_UNCONFIGURED",
     message: string,
   ) {
     super(message);
@@ -69,6 +70,19 @@ export class ProjectRegistry {
     return this.#store.listProjects(includeArchived);
   }
 
+  getProject(id: string): ProjectRecord {
+    const project = this.#store.getProject(id);
+    if (project === null) {
+      throw new ProjectRegistryError("PROJECT_NOT_FOUND", "Project does not exist");
+    }
+    return project;
+  }
+
+  listServices(projectId: string): ServiceConfig[] {
+    this.getProject(projectId);
+    return this.#store.listServices(projectId);
+  }
+
   async #activeProject(id: string): Promise<ProjectRecord> {
     const project = this.#store.getProject(id);
     if (project === null) {
@@ -110,7 +124,7 @@ export class ProjectRegistry {
   async selectService(
     projectId: string,
     scriptName: string,
-    options: { cwd?: string; displayName?: string } = {},
+    options: { cwd?: string; displayName?: string; expectedPort?: number } = {},
   ): Promise<ServiceConfig> {
     if (!NpmScriptNameSchema.safeParse(scriptName).success) {
       throw new ProjectRegistryError("SCRIPT_NAME_INVALID", "Selected npm script name is invalid");
@@ -128,12 +142,28 @@ export class ProjectRegistry {
       displayName: options.displayName ?? scriptName,
       scriptName,
       cwd: discovery.cwd,
+      ...(options.expectedPort === undefined ? {} : { expectedPort: options.expectedPort }),
       envFiles: [],
     });
     if (!parsed.success) {
       throw new ProjectRegistryError("SERVICE_CONFIG_INVALID", "Service configuration is invalid");
     }
     return this.#store.insertService(parsed.data);
+  }
+
+  async openAppUrl(serviceId: string): Promise<string> {
+    const service = this.#store.getService(serviceId);
+    if (service === null) {
+      throw new ProjectRegistryError("SERVICE_NOT_FOUND", "Service does not exist");
+    }
+    await this.#activeProject(service.projectId);
+    if (service.expectedPort === undefined) {
+      throw new ProjectRegistryError(
+        "OPEN_APP_PORT_UNCONFIGURED",
+        "Service has no configured app port",
+      );
+    }
+    return `http://127.0.0.1:${service.expectedPort}/`;
   }
 
   async launchPlan(serviceId: string, launcher: NpmLauncher): Promise<Omit<SpawnRequest, "runId">> {

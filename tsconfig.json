@@ -14,5 +14,5 @@
     "noEmit": true
   },
   "include": ["apps/**/*.ts", "packages/**/*.ts"],
-  "exclude": ["**/dist/**", "node_modules"]
+  "exclude": ["**/dist/**", "apps/web/**", "node_modules"]
 }

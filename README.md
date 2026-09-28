@@ -2,8 +2,7 @@
 
 DevDock is a local dashboard for developer projects and services. The planned flow is: register a trusted project, choose a service or profile, start it, inspect status and logs, open the app, and stop it.
 
-Phase 0 established the project tooling, runtime contracts, and an HTTP fixture. Phase 1.4 adds a three-OS CI spike for the cooperative fixture adapters; native Windows has been tested locally, while macOS and Linux CI results are pending. Phase 2 adds a project registry, safe `package.json` script discovery, SQLite persistence, and an npm launch plan. There is no persistent daemon or browser UI yet. The intended stack is a Node.js/TypeScript daemon with Fastify, a React/Vite browser UI, SQLite storage, and Server-Sent Events for live status and logs. The release target is native Windows, macOS, and Linux; full application support has not been verified on any of them. See [platform support](docs/platform-support.md), [process contract](docs/process-contract.md), [storage contract](docs/storage-contract.md), and [progress](docs/progress.md).
-Phase 3.1 adds a loopback-only authenticated API foundation. It is an auth prototype, not the dashboard or general service-control API. See the [local API contract](docs/local-api-contract.md) for its pairing and session behavior.
+Phase 0 established project tooling, runtime contracts, and an HTTP fixture. Phase 1.4 adds a three-OS CI spike for cooperative fixture adapters; native Windows has been tested locally, while macOS and Linux CI results are pending. Phase 2 adds a project registry, safe `package.json` script discovery, SQLite persistence, and an npm launch plan. Phase 3 adds a loopback-only authenticated API and a React/Vite dashboard for project configuration, discovery, command preview, and a validated Open App link. Service Start/Stop and live logs are still pending safe general process-tree control. The release target is native Windows, macOS, and Linux; full application support has not been verified on any of them. See [platform support](docs/platform-support.md), [process contract](docs/process-contract.md), [storage contract](docs/storage-contract.md), [local API contract](docs/local-api-contract.md), and [progress](docs/progress.md).
 
 ## Setup
 
@@ -20,19 +19,24 @@ Phase 3.1 adds a loopback-only authenticated API foundation. It is an auth proto
 | `npm run build` | Compile each workspace package to its ignored `dist/` output. |
 | `npm run test:unit` | Build and test runtime contracts, supervisor behavior, and data directory mapping. |
 | `npm run test:integration` | Test the HTTP fixture, CLI, cooperative process tree, project registry, SQLite persistence, and npm launch plan. |
-| `npm run test:browser` | Reserved for the Phase 3 UI; exits with a pending message today. |
+| `npm run test:browser` | Build and test the dashboard in a real system Edge/Chrome browser. |
 | `npm run fixture:http` | Start the fixture on loopback using an available port. |
 | `npm run fixture:tree` | Start a parent fixture that launches the HTTP child and shuts it down on Ctrl+C. |
 | `npm run fixture:control` | Build and open the Windows fixture control CLI. |
 | `npm run api:auth` | Build and start the loopback API auth prototype. |
+| `npm run api:registry` | Build and start the authenticated project dashboard and API on port 4317. |
 
 `npm run fixture:http` prints a JSON line containing its port. Open `http://127.0.0.1:<port>/ready` to see the readiness response, then press Ctrl+C to stop it. To select port 4300 in PowerShell, run `$env:PORT=4300; npm run fixture:http`. The `.env.example` file documents that non-secret value but is not loaded automatically. Do not commit real secrets.
 
 `npm run fixture:tree` prints a `tree-listening` event with the parent PID, child PID, and child HTTP port. Open its `/ready` URL, then press Ctrl+C. The parent asks the child to shut down and waits for its `close` event before exiting. The Windows integration test runs this tree under the supervisor beside an external HTTP sentinel using the same Node executable and script; it verifies that the managed child closes while the sentinel keeps serving requests.
 
-No persistent daemon or dashboard start command exists yet. The registry is an application module for the future API. Its integration test registers a project, discovers and selects a script without executing it, then explicitly launches that script through npm. The current supervisor still runs the cooperative fixture only; connecting arbitrary project scripts to a safely owned process tree is later work.
+The registry API and dashboard can run as a local server. Its integration test registers a project, discovers and selects a script without executing it, then explicitly launches that script through npm in the test. The current supervisor still runs the cooperative fixture only; connecting arbitrary project scripts to a safely owned process tree is later work.
 
 `npm run api:auth` binds to `127.0.0.1:4317` and prints its origin and one-time pairing code to the terminal. Set `DEVDOCK_PORT=0` to choose an available port. The pairing code expires after five minutes and is never served by the API. The API currently exposes authenticated session status, session renewal, and an authenticated SSE connection. It does not yet expose project or process commands. Restart the prototype to create a new pairing code. Do not paste the code into a URL or share terminal output containing it.
+
+`npm run api:registry` serves the dashboard and API at `http://127.0.0.1:4317` and stores registry data in the OS user data directory. Open that URL, enter the pairing code printed in the terminal, then register a trusted folder. You can discover scripts, select services, preview npm arguments, and prepare an Open App link from a configured port. These actions do not start project code. Run one API command at a time on port 4317; Start/Stop and live logs for general npm scripts are not available yet.
+
+The browser test uses an installed Edge/Chrome executable and does not download a browser. On Windows it searches standard Edge locations; set `DEVDOCK_TEST_BROWSER` to an absolute browser executable path if needed. Browser results on macOS and Linux remain pending.
 
 The [platform spike workflow](.github/workflows/platform-spike.yml) is configured for Windows 2025 x64, macOS 15 arm64, and Ubuntu 24.04 x64 runners. It records runner details and runs the pinned toolchain, lint, typecheck, unit tests, and integration tests. The POSIX fixture adapter uses the same cooperative IPC protocol as the Windows fixture adapter. CI results must be reviewed before recording macOS or Linux as verified; neither adapter currently provides forced process-tree termination.
 

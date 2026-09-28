@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { ServerResponse } from "node:http";
 import { join } from "node:path";
-import { PairingRequestSchema } from "@devdock/contracts";
+import { LogGapEventSchema, PairingRequestSchema, RegistryIdSchema } from "@devdock/contracts";
 import type { NpmLauncher } from "@devdock/platform";
 import { ProjectFileError } from "@devdock/platform";
 import { RegistryStorageError } from "@devdock/storage";
@@ -10,6 +10,7 @@ import fastifyStatic from "@fastify/static";
 import fastify, { type FastifyRequest } from "fastify";
 import { type ProjectRegistry, ProjectRegistryError } from "./project-registry.js";
 import { registerProjectRoutes } from "./project-routes.js";
+import type { RunLogBuffer } from "./run-log-buffer.js";
 
 const COOKIE_NAME = "devdock_session";
 const PAIRING_TTL_MS = 5 * 60_000;
@@ -56,6 +57,24 @@ export interface LocalApiOptions {
   registry?: ProjectRegistry;
   launcher?: NpmLauncher;
   webRoot?: string;
+  logBuffers?: ReadonlyMap<string, RunLogBuffer>;
+}
+
+function sequenceCursor(value: unknown): number | null {
+  if (typeof value !== "string" || !/^(?:0|[1-9][0-9]*)$/u.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+function eventQuery(value: unknown): { runId?: string; after: number } | null {
+  if (value === null || typeof value !== "object") return null;
+  const query = value as Record<string, unknown>;
+  if (Object.keys(query).some((key) => key !== "runId" && key !== "after")) return null;
+  const runId = query.runId;
+  if (runId !== undefined && !RegistryIdSchema.safeParse(runId).success) return null;
+  const after = query.after === undefined ? 0 : sequenceCursor(query.after);
+  if (after === null || (runId === undefined && query.after !== undefined)) return null;
+  return runId === undefined ? { after } : { runId: runId as string, after };
 }
 
 function publicWebPath(method: string, url: string): boolean {
@@ -96,7 +115,10 @@ export function createLocalApiServer(options: LocalApiOptions = {}) {
   let failedPairingAttempts = 0;
   let pairingUsed = false;
   let session: Session | null = null;
-  const eventClients = new Map<ServerResponse, NodeJS.Timeout>();
+  const eventClients = new Map<
+    ServerResponse,
+    { heartbeat: NodeJS.Timeout; unsubscribe?: () => void }
+  >();
 
   function expectedOrigin(): string | null {
     const address = app.server.address();
@@ -232,6 +254,19 @@ export function createLocalApiServer(options: LocalApiOptions = {}) {
     if (authorized === null) {
       return reply.code(401).send(error("SESSION_REQUIRED", "A valid session is required"));
     }
+    const query = eventQuery(request.query);
+    if (query === null) {
+      return reply.code(400).send(error("REQUEST_INVALID", "Event cursor is invalid"));
+    }
+    const source = query.runId === undefined ? undefined : options.logBuffers?.get(query.runId);
+    if (query.runId !== undefined && (source === undefined || source.runId !== query.runId)) {
+      return reply.code(404).send(error("RUN_NOT_FOUND", "Run log is not available"));
+    }
+    const lastEventId = request.headers["last-event-id"];
+    const after = lastEventId === undefined ? query.after : sequenceCursor(lastEventId);
+    if (after === null || (source !== undefined && after > source.replay().latestSequence)) {
+      return reply.code(400).send(error("REQUEST_INVALID", "Event cursor is invalid"));
+    }
     if (eventClients.size >= MAX_EVENT_CLIENTS) {
       return reply.code(429).send(error("EVENT_CLIENT_LIMIT", "Too many event connections"));
     }
@@ -243,23 +278,62 @@ export function createLocalApiServer(options: LocalApiOptions = {}) {
       "x-content-type-options": "nosniff",
       "x-accel-buffering": "no",
     });
-    reply.raw.write(": connected\n\n");
+    const writeFrame = (frame: string): boolean => {
+      if (reply.raw.destroyed || reply.raw.writableEnded) return false;
+      const accepted = reply.raw.write(frame);
+      if (!accepted) reply.raw.end();
+      return accepted;
+    };
+    if (!writeFrame(": connected\n\n")) return;
+    if (source !== undefined) {
+      const replay = source.replay(after);
+      if (replay.gap) {
+        const gap = LogGapEventSchema.parse({
+          daemonSessionId: source.daemonSessionId,
+          runId: source.runId,
+          sequence: replay.oldestSequence - 1,
+          timestamp: new Date(now()).toISOString(),
+          type: "gap",
+          oldestSequence: replay.oldestSequence,
+          latestSequence: replay.latestSequence,
+        });
+        if (!writeFrame(`id: ${gap.sequence}\nevent: gap\ndata: ${JSON.stringify(gap)}\n\n`))
+          return;
+      }
+      for (const event of replay.events) {
+        if (!writeFrame(`id: ${event.sequence}\nevent: log\ndata: ${JSON.stringify(event)}\n\n`)) {
+          return;
+        }
+      }
+    }
+    const unsubscribe = source?.subscribe((event) => {
+      if (now() >= authorized.expiresAt) {
+        reply.raw.end();
+        return;
+      }
+      writeFrame(`id: ${event.sequence}\nevent: log\ndata: ${JSON.stringify(event)}\n\n`);
+    });
     const heartbeat = setInterval(() => {
-      if (now() >= authorized.expiresAt || !reply.raw.write(": heartbeat\n\n")) {
+      if (now() >= authorized.expiresAt || !writeFrame(": heartbeat\n\n")) {
         reply.raw.end();
       }
     }, 15_000);
     heartbeat.unref();
-    eventClients.set(reply.raw, heartbeat);
+    eventClients.set(reply.raw, {
+      heartbeat,
+      ...(unsubscribe === undefined ? {} : { unsubscribe }),
+    });
     reply.raw.once("close", () => {
       clearInterval(heartbeat);
+      unsubscribe?.();
       eventClients.delete(reply.raw);
     });
   });
 
   app.addHook("preClose", async () => {
-    for (const [response, heartbeat] of eventClients) {
-      clearInterval(heartbeat);
+    for (const [response, client] of eventClients) {
+      clearInterval(client.heartbeat);
+      client.unsubscribe?.();
       response.end();
     }
     eventClients.clear();

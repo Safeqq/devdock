@@ -61,8 +61,8 @@ function safeCharacter(character: string): string {
 }
 
 export class RunLogBuffer {
-  readonly #daemonSessionId: string;
-  readonly #runId: string;
+  readonly daemonSessionId: string;
+  readonly runId: string;
   readonly #maxLines: number;
   readonly #maxBytes: number;
   readonly #maxLineBytes: number;
@@ -76,10 +76,11 @@ export class RunLogBuffer {
   #retainedBytes = 0;
   #sequence = 0;
   #capturing = false;
+  readonly #listeners = new Set<(event: LogEvent) => void>();
 
   constructor(daemonSessionId: string, runId: string, options: LogBufferOptions = {}) {
-    this.#daemonSessionId = daemonSessionId;
-    this.#runId = runId;
+    this.daemonSessionId = daemonSessionId;
+    this.runId = runId;
     this.#maxLines = positiveLimit(
       options.maxLines ?? DEFAULT_MAX_LINES,
       DEFAULT_MAX_LINES,
@@ -158,6 +159,11 @@ export class RunLogBuffer {
     };
   }
 
+  subscribe(listener: (event: LogEvent) => void): () => void {
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
+  }
+
   #accept(stream: LogStream, decoded: string): void {
     const state = this.#streams[stream];
     for (const character of decoded) {
@@ -194,8 +200,8 @@ export class RunLogBuffer {
     const text = state.parts.join("");
     const event = Object.freeze(
       LogEventSchema.parse({
-        daemonSessionId: this.#daemonSessionId,
-        runId: this.#runId,
+        daemonSessionId: this.daemonSessionId,
+        runId: this.runId,
         sequence: ++this.#sequence,
         timestamp: this.#now().toISOString(),
         type: "log",
@@ -220,6 +226,14 @@ export class RunLogBuffer {
     if (this.#head >= 1_024 && this.#head * 2 >= this.#entries.length) {
       this.#entries = this.#entries.slice(this.#head);
       this.#head = 0;
+    }
+    for (const listener of this.#listeners) {
+      try {
+        listener(event);
+      } catch {
+        // A disconnected viewer must never stop draining a service's stdout/stderr.
+        this.#listeners.delete(listener);
+      }
     }
   }
 }

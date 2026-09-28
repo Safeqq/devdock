@@ -87,6 +87,17 @@ export const LogEventSchema = z.strictObject({
 });
 export type LogEvent = z.infer<typeof LogEventSchema>;
 
+export const LogGapEventSchema = z.strictObject({
+  daemonSessionId: identifier,
+  runId: identifier,
+  sequence: z.number().int().positive().safe(),
+  timestamp: z.iso.datetime({ offset: true }),
+  type: z.literal("gap"),
+  oldestSequence: z.number().int().positive().safe(),
+  latestSequence: z.number().int().nonnegative().safe(),
+});
+export type LogGapEvent = z.infer<typeof LogGapEventSchema>;
+
 export const ProjectRecordSchema = z.strictObject({
   id: identifier,
   displayName: z.string().trim().min(1).max(128),

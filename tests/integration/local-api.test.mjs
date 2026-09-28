@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { request as httpRequest } from "node:http";
 import { test } from "node:test";
 import { createLocalApiServer } from "../../apps/daemon/dist/local-api.js";
+import { RunLogBuffer } from "../../apps/daemon/dist/run-log-buffer.js";
 
 async function request(origin, path, options = {}) {
   return fetch(`${origin}${path}`, { signal: AbortSignal.timeout(3_000), ...options });
@@ -28,6 +30,26 @@ function requestWithHost(origin, host) {
     outbound.once("error", reject);
     outbound.end();
   });
+}
+
+async function nextSseFrame(reader, state) {
+  while (true) {
+    const end = state.text.indexOf("\n\n");
+    if (end !== -1) {
+      const block = state.text.slice(0, end);
+      state.text = state.text.slice(end + 2);
+      if (block.startsWith(":")) continue;
+      const fields = Object.fromEntries(
+        block
+          .split("\n")
+          .map((line) => [line.slice(0, line.indexOf(":")), line.slice(line.indexOf(":") + 2)]),
+      );
+      return { type: fields.event, id: Number(fields.id), data: JSON.parse(fields.data) };
+    }
+    const chunk = await reader.read();
+    if (chunk.done) throw new Error("SSE stream closed before the next event");
+    state.text += state.decoder.decode(chunk.value, { stream: true });
+  }
 }
 
 test("local API guards pairing, sessions, CSRF, Host/Origin, and SSE", {
@@ -168,5 +190,65 @@ test("pairing attempts and session expiry are bounded", { timeout: 10_000 }, asy
     assert.equal((await pairRequest(thirdOrigin, expired.pairingCode)).status, 410);
   } finally {
     await expired.close();
+  }
+});
+
+test("authenticated SSE replays retained logs, signals gaps, and follows live output", {
+  timeout: 10_000,
+}, async () => {
+  const runId = randomUUID();
+  const logs = new RunLogBuffer("test-daemon-session", runId, {
+    maxLines: 2,
+    maxBytes: 64,
+    maxLineBytes: 32,
+  });
+  logs.push("stdout", "one\ntwo\nthree\n");
+  const api = createLocalApiServer({ logBuffers: new Map([[runId, logs]]) });
+  const origin = await api.listen(0);
+  let reader;
+  try {
+    const path = `/api/events?runId=${runId}`;
+    assert.equal((await request(origin, path)).status, 401);
+    const paired = await pairRequest(origin, api.pairingCode);
+    assert.equal(paired.status, 200);
+    const cookie = paired.headers.get("set-cookie").split(";")[0];
+    assert.equal((await request(origin, `${path}&after=4`, { headers: { cookie } })).status, 400);
+    assert.equal(
+      (await request(origin, `/api/events?runId=${randomUUID()}`, { headers: { cookie } })).status,
+      404,
+    );
+    assert.equal(
+      (await request(origin, path, { headers: { cookie, "last-event-id": "invalid" } })).status,
+      400,
+    );
+
+    const response = await fetch(`${origin}${path}`, {
+      headers: { cookie, "last-event-id": "0" },
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(response.status, 200);
+    reader = response.body.getReader();
+    const state = { text: "", decoder: new TextDecoder() };
+    const gap = await nextSseFrame(reader, state);
+    assert.equal(gap.type, "gap");
+    assert.equal(gap.id, 1);
+    assert.equal(gap.data.oldestSequence, 2);
+    assert.equal(gap.data.latestSequence, 3);
+    const second = await nextSseFrame(reader, state);
+    const third = await nextSseFrame(reader, state);
+    assert.deepEqual([second.data.text, third.data.text], ["two", "three"]);
+    assert.deepEqual([second.id, third.id], [2, 3]);
+
+    logs.push("stderr", "live\n");
+    const live = await nextSseFrame(reader, state);
+    assert.equal(live.type, "log");
+    assert.equal(live.id, 4);
+    assert.equal(live.data.stream, "stderr");
+    assert.equal(live.data.text, "live");
+    await reader.cancel();
+    reader = undefined;
+  } finally {
+    await reader?.cancel();
+    await api.close();
   }
 });

@@ -97,3 +97,18 @@ test("line and byte eviction report a replay gap without resetting sequence", ()
   );
   assert.throws(() => logs.replay(-1), RangeError);
 });
+
+test("a failing live viewer cannot interrupt stream capture", () => {
+  const logs = buffer();
+  const seen = [];
+  const unsubscribe = logs.subscribe((event) => seen.push(event.sequence));
+  logs.subscribe(() => {
+    throw new Error("viewer disconnected");
+  });
+  logs.push("stdout", "first\nsecond\n");
+  assert.deepEqual(seen, [1, 2]);
+  unsubscribe();
+  logs.push("stderr", "third\n");
+  assert.deepEqual(seen, [1, 2]);
+  assert.equal(logs.replay().latestSequence, 3);
+});

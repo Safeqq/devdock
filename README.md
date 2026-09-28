@@ -2,7 +2,7 @@
 
 DevDock is a local dashboard for developer projects and services. The planned flow is: register a trusted project, choose a service or profile, start it, inspect status and logs, open the app, and stop it.
 
-Phase 0 established project tooling, runtime contracts, and an HTTP fixture. Phase 1.4 adds a three-OS CI spike for cooperative fixture adapters; native Windows has been tested locally, while macOS and Linux CI results are pending. Phase 2 adds a project registry, safe `package.json` script discovery, SQLite persistence, and an npm launch plan. Phase 3 adds a loopback-only authenticated API and a React/Vite dashboard for project configuration, discovery, command preview, and a validated Open App link. Service Start/Stop and live logs are still pending safe general process-tree control. The release target is native Windows, macOS, and Linux; full application support has not been verified on any of them. See [platform support](docs/platform-support.md), [process contract](docs/process-contract.md), [storage contract](docs/storage-contract.md), [local API contract](docs/local-api-contract.md), and [progress](docs/progress.md).
+Phase 0 established project tooling, runtime contracts, and an HTTP fixture. Phase 1.4 adds a three-OS CI spike for cooperative fixture adapters; native Windows has been tested locally, while macOS and Linux CI results are pending. Phase 2 adds a project registry, safe `package.json` script discovery, SQLite persistence, and an npm launch plan. Phase 3 adds a loopback-only authenticated API and a React/Vite dashboard for project configuration, discovery, command preview, and a validated Open App link. A test-only Windows Job Object spike has proven containment for an orphaned fixture child and bounded stdout/stderr forwarding; it is not yet a general npm adapter. Service Start/Stop and live UI logs remain pending. The release target is native Windows, macOS, and Linux; full application support has not been verified on any of them. See [platform support](docs/platform-support.md), [process contract](docs/process-contract.md), [Windows Job Object spike](docs/windows-job-spike.md), [storage contract](docs/storage-contract.md), [local API contract](docs/local-api-contract.md), and [progress](docs/progress.md).
 
 ## Setup
 
@@ -18,7 +18,7 @@ Phase 0 established project tooling, runtime contracts, and an HTTP fixture. Pha
 | `npm run lint` | Lint and format-check source, scripts, tests, and configuration. |
 | `npm run build` | Compile each workspace package to its ignored `dist/` output. |
 | `npm run test:unit` | Build and test runtime contracts, supervisor behavior, and data directory mapping. |
-| `npm run test:integration` | Test the HTTP fixture, CLI, cooperative process tree, project registry, SQLite persistence, and npm launch plan. |
+| `npm run test:integration` | Test the HTTP fixture, CLI, cooperative process tree, Windows Job Object spike, project registry, SQLite persistence, and npm launch plan. |
 | `npm run test:browser` | Build and test the dashboard in a real system Edge/Chrome browser. |
 | `npm run fixture:http` | Start the fixture on loopback using an available port. |
 | `npm run fixture:tree` | Start a parent fixture that launches the HTTP child and shuts it down on Ctrl+C. |

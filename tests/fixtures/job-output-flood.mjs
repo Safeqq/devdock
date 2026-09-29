@@ -27,3 +27,4 @@ async function writeFlood(stream, byte) {
 await Promise.all([writeFlood(process.stdout, 0x6f), writeFlood(process.stderr, 0x65)]);
 writeFileSync(`${readyFile}.tmp`, JSON.stringify({ parentPid: process.pid, bytesPerStream }));
 renameSync(`${readyFile}.tmp`, readyFile);
+process.exitCode = 7;

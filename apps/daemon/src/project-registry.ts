@@ -3,6 +3,7 @@ import { basename } from "node:path";
 import {
   NpmScriptNameSchema,
   type ProjectRecord,
+  type RunSnapshot,
   type ScriptDiscovery,
   ScriptDiscoverySchema,
   type ServiceConfig,
@@ -83,6 +84,24 @@ export class ProjectRegistry {
     return this.#store.listServices(projectId);
   }
 
+  getService(id: string): ServiceConfig {
+    const service = this.#store.getService(id);
+    if (service === null) {
+      throw new ProjectRegistryError("SERVICE_NOT_FOUND", "Service does not exist");
+    }
+    return service;
+  }
+
+  saveRunSnapshot(snapshot: RunSnapshot): RunSnapshot {
+    this.getService(snapshot.serviceId);
+    return this.#store.saveRunSnapshot(snapshot);
+  }
+
+  latestRun(serviceId: string): RunSnapshot | null {
+    this.getService(serviceId);
+    return this.#store.listRuns(serviceId).at(-1) ?? null;
+  }
+
   async #activeProject(id: string): Promise<ProjectRecord> {
     const project = this.#store.getProject(id);
     if (project === null) {
@@ -152,10 +171,7 @@ export class ProjectRegistry {
   }
 
   async openAppUrl(serviceId: string): Promise<string> {
-    const service = this.#store.getService(serviceId);
-    if (service === null) {
-      throw new ProjectRegistryError("SERVICE_NOT_FOUND", "Service does not exist");
-    }
+    const service = this.getService(serviceId);
     await this.#activeProject(service.projectId);
     if (service.expectedPort === undefined) {
       throw new ProjectRegistryError(
@@ -167,10 +183,7 @@ export class ProjectRegistry {
   }
 
   async launchPlan(serviceId: string, launcher: NpmLauncher): Promise<Omit<SpawnRequest, "runId">> {
-    const service = this.#store.getService(serviceId);
-    if (service === null) {
-      throw new ProjectRegistryError("SERVICE_NOT_FOUND", "Service does not exist");
-    }
+    const service = this.getService(serviceId);
     const discovery = await this.discoverScripts(service.projectId, service.cwd.displayPath);
     if (discovery.cwd.canonicalPath !== service.cwd.canonicalPath) {
       throw new ProjectRegistryError(

@@ -21,3 +21,7 @@ export {
   resolveProjectDirectory,
   resolveServiceDirectory,
 } from "./project-files.js";
+export {
+  WindowsJobProcessAdapter,
+  type WindowsJobProcessAdapterOptions,
+} from "./windows-job-process-adapter.js";

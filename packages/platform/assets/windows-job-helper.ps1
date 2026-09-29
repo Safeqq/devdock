@@ -1,15 +1,9 @@
-param(
-  [Parameter(Mandatory = $true)][string]$NodeExecutable,
-  [Parameter(Mandatory = $true)][string]$ScriptPath,
-  [Parameter(Mandatory = $true)][string]$ReadyFile
-)
-
 $ErrorActionPreference = 'Stop'
-$env:DEVDOCK_READY_FILE = $ReadyFile
 
 $source = @'
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -19,6 +13,7 @@ using Microsoft.Win32.SafeHandles;
 
 public sealed class DevDockJobProbe : IDisposable {
     private const uint CREATE_NO_WINDOW = 0x08000000;
+    private const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
     private const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     private const uint STARTF_USESTDHANDLES = 0x00000100;
     private const int PROC_THREAD_ATTRIBUTE_HANDLE_LIST = 0x00020002;
@@ -30,6 +25,9 @@ public sealed class DevDockJobProbe : IDisposable {
     private const uint FILE_SHARE_WRITE = 0x00000002;
     private const uint OPEN_EXISTING = 3;
     private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+    private const uint WAIT_OBJECT_0 = 0x00000000;
+    private const uint WAIT_FAILED = 0xFFFFFFFF;
+    private const uint STILL_ACTIVE = 259;
     private const int JobObjectBasicAccountingInformation = 1;
     private const int JobObjectExtendedLimitInformation = 9;
     private const int OutputQueueCapacity = 128;
@@ -172,6 +170,10 @@ public sealed class DevDockJobProbe : IDisposable {
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool TerminateJobObject(IntPtr job, uint exitCode);
     [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
+    [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);
 
     private IntPtr job;
@@ -180,8 +182,11 @@ public sealed class DevDockJobProbe : IDisposable {
     private readonly BlockingCollection<OutputChunk> outputQueue;
     private readonly FileStream stdoutStream;
     private readonly FileStream stderrStream;
+    private readonly ManualResetEvent outputComplete;
     private int activeReaders;
     private int outputStarted;
+    private int lifecycleDecision;
+    private int disposed;
     private long droppedBytes;
     public uint Pid { get; private set; }
 
@@ -196,18 +201,99 @@ public sealed class DevDockJobProbe : IDisposable {
             OutputChunkSize, false);
         this.stderrStream = new FileStream(new SafeFileHandle(stderrRead, true), FileAccess.Read,
             OutputChunkSize, false);
+        this.outputComplete = new ManualResetEvent(false);
         this.activeReaders = 2;
     }
 
-    private static string QuotePath(string path) {
-        if (path.IndexOf('"') >= 0 || path.IndexOf('\r') >= 0 || path.IndexOf('\n') >= 0) {
-            throw new ArgumentException("Probe paths cannot contain quotes or line breaks");
+    private static string QuoteArgument(string argument) {
+        if (argument == null || argument.IndexOf('\0') >= 0) {
+            throw new ArgumentException("Arguments cannot be null or contain NUL");
         }
-        return "\"" + path + "\"";
+        StringBuilder quoted = new StringBuilder(argument.Length + 2);
+        quoted.Append('"');
+        int backslashes = 0;
+        foreach (char character in argument) {
+            if (character == '\\') {
+                backslashes++;
+                continue;
+            }
+            if (character == '"') {
+                quoted.Append('\\', backslashes * 2 + 1);
+                quoted.Append('"');
+                backslashes = 0;
+                continue;
+            }
+            quoted.Append('\\', backslashes);
+            backslashes = 0;
+            quoted.Append(character);
+        }
+        quoted.Append('\\', backslashes * 2);
+        quoted.Append('"');
+        return quoted.ToString();
+    }
+
+    private static string BuildCommandLine(string executable, string[] arguments) {
+        if (string.IsNullOrEmpty(executable) || executable.IndexOf('\0') >= 0 ||
+            !Path.IsPathRooted(executable)) {
+            throw new ArgumentException("Executable must be an absolute path without NUL");
+        }
+        if (arguments == null) throw new ArgumentNullException("arguments");
+        if (arguments.Length > 256) throw new ArgumentException("Too many process arguments");
+        StringBuilder command = new StringBuilder(QuoteArgument(executable));
+        if (command.Length >= 32767) {
+            throw new ArgumentException("Windows command line exceeds 32766 characters");
+        }
+        foreach (string argument in arguments) {
+            command.Append(' ');
+            command.Append(QuoteArgument(argument));
+            if (command.Length >= 32767) {
+                throw new ArgumentException("Windows command line exceeds 32766 characters");
+            }
+        }
+        return command.ToString();
     }
 
     private static Exception WindowsError(string operation) {
         return new Win32Exception(Marshal.GetLastWin32Error(), operation + " failed");
+    }
+
+    private static IntPtr BuildEnvironmentBlock(string[] entries) {
+        if (entries == null) throw new ArgumentNullException("entries");
+        if (entries.Length > 256) throw new ArgumentException("Too many environment entries");
+        SortedDictionary<string, string> variables =
+            new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        int characterCount = 2;
+        foreach (string entry in entries) {
+            if (entry == null || entry.IndexOf('\0') >= 0) {
+                throw new ArgumentException("Environment entries cannot be null or contain NUL");
+            }
+            int separator = entry.IndexOf('=');
+            if (separator <= 0) throw new ArgumentException("Environment entry has no valid name");
+            string name = entry.Substring(0, separator);
+            string value = entry.Substring(separator + 1);
+            if (variables.ContainsKey(name)) {
+                throw new ArgumentException("Duplicate environment variable: " + name);
+            }
+            variables.Add(name, value);
+            characterCount += name.Length + value.Length + 2;
+            if (characterCount > 1024 * 1024) {
+                throw new ArgumentException("Environment block exceeds 1 MiB");
+            }
+        }
+
+        StringBuilder block = new StringBuilder(characterCount);
+        foreach (KeyValuePair<string, string> variable in variables) {
+            block.Append(variable.Key);
+            block.Append('=');
+            block.Append(variable.Value);
+            block.Append('\0');
+        }
+        block.Append('\0');
+        if (variables.Count == 0) block.Append('\0');
+        char[] characters = block.ToString().ToCharArray();
+        IntPtr pointer = Marshal.AllocHGlobal(characters.Length * sizeof(char));
+        Marshal.Copy(characters, 0, pointer, characters.Length);
+        return pointer;
     }
 
     public static void WriteProtocol(string json) {
@@ -224,6 +310,7 @@ public sealed class DevDockJobProbe : IDisposable {
         StartOutputWriter();
         StartOutputReader("stdout", stdoutStream);
         StartOutputReader("stderr", stderrStream);
+        StartCompletionMonitor();
     }
 
     private void StartOutputReader(string streamName, FileStream source) {
@@ -252,12 +339,16 @@ public sealed class DevDockJobProbe : IDisposable {
 
     private void StartOutputWriter() {
         Thread writer = new Thread(delegate() {
-            foreach (OutputChunk chunk in outputQueue.GetConsumingEnumerable()) {
+            try {
+                foreach (OutputChunk chunk in outputQueue.GetConsumingEnumerable()) {
+                    WriteDroppedOutputEvent();
+                    WriteProtocol("{\"type\":\"job-output\",\"stream\":\"" + chunk.Stream +
+                        "\",\"data\":\"" + Convert.ToBase64String(chunk.Data) + "\"}");
+                }
                 WriteDroppedOutputEvent();
-                WriteProtocol("{\"type\":\"job-output\",\"stream\":\"" + chunk.Stream +
-                    "\",\"data\":\"" + Convert.ToBase64String(chunk.Data) + "\"}");
+            } finally {
+                outputComplete.Set();
             }
-            WriteDroppedOutputEvent();
         });
         writer.IsBackground = true;
         writer.Name = "DevDock output writer";
@@ -271,8 +362,39 @@ public sealed class DevDockJobProbe : IDisposable {
         }
     }
 
-    public static DevDockJobProbe Start(string executable, string scriptPath) {
-        string command = QuotePath(executable) + " " + QuotePath(scriptPath);
+    private void StartCompletionMonitor() {
+        Thread monitor = new Thread(delegate() {
+            try {
+                while (Interlocked.CompareExchange(ref disposed, 0, 0) == 0 &&
+                    Interlocked.CompareExchange(ref lifecycleDecision, 0, 0) == 0) {
+                    uint exitCode;
+                    if (TryGetCompletion(out exitCode)) {
+                        if (Interlocked.CompareExchange(ref lifecycleDecision, 2, 0) == 0) {
+                            WriteProtocol("{\"type\":\"job-exited\",\"activeProcesses\":0," +
+                                "\"rootExitCode\":" + exitCode + "}");
+                            Environment.Exit(0);
+                        }
+                        return;
+                    }
+                    Thread.Sleep(20);
+                }
+            } catch (Exception error) {
+                Console.Error.WriteLine(error.Message);
+                Environment.Exit(1);
+            }
+        });
+        monitor.IsBackground = true;
+        monitor.Name = "DevDock completion monitor";
+        monitor.Start();
+    }
+
+    public static DevDockJobProbe Start(string executable, string[] arguments,
+        string currentDirectory, string[] environmentEntries) {
+        string command = BuildCommandLine(executable, arguments);
+        if (string.IsNullOrEmpty(currentDirectory) || currentDirectory.IndexOf('\0') >= 0 ||
+            !Path.IsPathRooted(currentDirectory)) {
+            throw new ArgumentException("Current directory must be an absolute path without NUL");
+        }
         IntPtr job = CreateJobObject(IntPtr.Zero, null);
         if (job == IntPtr.Zero) throw WindowsError("CreateJobObject");
         PROCESS_INFORMATION child = new PROCESS_INFORMATION();
@@ -285,6 +407,7 @@ public sealed class DevDockJobProbe : IDisposable {
         IntPtr stderrRead = IntPtr.Zero;
         IntPtr stderrWrite = IntPtr.Zero;
         IntPtr nullInput = IntPtr.Zero;
+        IntPtr environmentBlock = IntPtr.Zero;
         bool attributesInitialized = false;
         try {
             JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
@@ -347,9 +470,11 @@ public sealed class DevDockJobProbe : IDisposable {
             startup.StartupInfo.hStdOutput = stdoutWrite;
             startup.StartupInfo.hStdError = stderrWrite;
             startup.lpAttributeList = attributeList;
+            environmentBlock = BuildEnvironmentBlock(environmentEntries);
             created = CreateProcessW(executable, new StringBuilder(command), IntPtr.Zero, IntPtr.Zero,
-                true, CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT, IntPtr.Zero,
-                System.IO.Path.GetDirectoryName(scriptPath), ref startup, out child);
+                true, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT,
+                environmentBlock,
+                currentDirectory, ref startup, out child);
             if (!created) throw WindowsError("CreateProcessW");
             CloseHandle(stdoutWrite);
             stdoutWrite = IntPtr.Zero;
@@ -382,6 +507,7 @@ public sealed class DevDockJobProbe : IDisposable {
             if (stderrRead != IntPtr.Zero) CloseHandle(stderrRead);
             if (stderrWrite != IntPtr.Zero) CloseHandle(stderrWrite);
             if (nullInput != IntPtr.Zero) CloseHandle(nullInput);
+            if (environmentBlock != IntPtr.Zero) Marshal.FreeHGlobal(environmentBlock);
         }
     }
 
@@ -397,17 +523,52 @@ public sealed class DevDockJobProbe : IDisposable {
         return information.ActiveProcesses;
     }
 
-    public void Stop() {
+    private bool TryGetCompletion(out uint exitCode) {
+        if (job == IntPtr.Zero || process == IntPtr.Zero) {
+            throw new ObjectDisposedException("DevDockJobProbe");
+        }
+        exitCode = 0;
+        uint wait = WaitForSingleObject(process, 0);
+        if (wait == WAIT_FAILED) throw WindowsError("WaitForSingleObject");
+        if (wait != WAIT_OBJECT_0 || ActiveProcesses() != 0 || !outputComplete.WaitOne(0)) {
+            return false;
+        }
+        uint observed;
+        if (!GetExitCodeProcess(process, out observed)) throw WindowsError("GetExitCodeProcess");
+        if (observed == STILL_ACTIVE) return false;
+        exitCode = observed;
+        return true;
+    }
+
+    public uint RootExitCode() {
+        if (process == IntPtr.Zero) throw new ObjectDisposedException("DevDockJobProbe");
+        uint exitCode;
+        if (!GetExitCodeProcess(process, out exitCode)) throw WindowsError("GetExitCodeProcess");
+        if (exitCode == STILL_ACTIVE) {
+            throw new InvalidOperationException("Root process is still active");
+        }
+        return exitCode;
+    }
+
+    public bool Stop() {
         if (job == IntPtr.Zero) throw new ObjectDisposedException("DevDockJobProbe");
+        if (Interlocked.CompareExchange(ref lifecycleDecision, 1, 0) != 0) return false;
         if (!TerminateJobObject(job, 1)) throw WindowsError("TerminateJobObject");
         for (int attempt = 0; attempt < 250; attempt++) {
-            if (ActiveProcesses() == 0) return;
+            if (ActiveProcesses() == 0) {
+                if (!outputComplete.WaitOne(5000)) {
+                    throw new TimeoutException("Output did not drain after job termination");
+                }
+                return true;
+            }
             Thread.Sleep(20);
         }
         throw new TimeoutException("Job still has active processes after termination");
     }
 
     public void Dispose() {
+        Interlocked.Exchange(ref disposed, 1);
+        Interlocked.CompareExchange(ref lifecycleDecision, 1, 0);
         if (Interlocked.CompareExchange(ref outputStarted, 1, 1) == 0) {
             stdoutStream.Dispose();
             stderrStream.Dispose();
@@ -422,7 +583,38 @@ public sealed class DevDockJobProbe : IDisposable {
 $job = $null
 try {
   Add-Type -TypeDefinition $source -Language CSharp
-  $job = [DevDockJobProbe]::Start($NodeExecutable, $ScriptPath)
+  $launchLine = [Console]::In.ReadLine()
+  if ($null -eq $launchLine) { throw 'Launch request is required' }
+  $envelope = $launchLine | ConvertFrom-Json
+  if ($envelope.type -ne 'launch' -or $envelope.data -isnot [string]) {
+    throw 'First command must be a launch request with a base64 payload'
+  }
+  $launchJson = [System.Text.Encoding]::UTF8.GetString(
+    [System.Convert]::FromBase64String($envelope.data)
+  )
+  $launch = $launchJson | ConvertFrom-Json
+  if ($launch.executable -isnot [string] -or $launch.canonicalCwd -isnot [string] -or
+      $null -eq $launch.args -or $null -eq $launch.environment) {
+    throw 'Launch payload must contain executable, args, canonicalCwd, and environment'
+  }
+  $arguments = [System.Collections.Generic.List[string]]::new()
+  foreach ($argument in @($launch.args)) {
+    if ($argument -isnot [string]) { throw 'Every process argument must be a string' }
+    $arguments.Add($argument)
+  }
+  $environmentEntries = [System.Collections.Generic.List[string]]::new()
+  foreach ($property in $launch.environment.PSObject.Properties) {
+    if ($property.Value -isnot [string]) {
+      throw "Environment value must be a string: $($property.Name)"
+    }
+    $environmentEntries.Add("$($property.Name)=$($property.Value)")
+  }
+  $job = [DevDockJobProbe]::Start(
+    $launch.executable,
+    $arguments.ToArray(),
+    $launch.canonicalCwd,
+    $environmentEntries.ToArray()
+  )
   [DevDockJobProbe]::WriteProtocol((@{ type = 'job-ready'; pid = $job.Pid } | ConvertTo-Json -Compress))
   $job.BeginOutputForwarding()
   while ($true) {
@@ -431,9 +623,14 @@ try {
     if ($command -eq 'status') {
       [DevDockJobProbe]::WriteProtocol((@{ type = 'job-status'; activeProcesses = $job.ActiveProcesses() } | ConvertTo-Json -Compress))
     } elseif ($command -eq 'stop') {
-      $job.Stop()
-      [DevDockJobProbe]::WriteProtocol((@{ type = 'job-stopped'; activeProcesses = $job.ActiveProcesses() } | ConvertTo-Json -Compress))
-      break
+      if ($job.Stop()) {
+        [DevDockJobProbe]::WriteProtocol((@{
+          type = 'job-stopped'
+          activeProcesses = $job.ActiveProcesses()
+          rootExitCode = [long]$job.RootExitCode()
+        } | ConvertTo-Json -Compress))
+        break
+      }
     }
   }
 } catch {

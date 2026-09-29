@@ -167,3 +167,42 @@ export const CommandPreviewResponseSchema = z.strictObject({
   }),
 });
 export const OpenAppResponseSchema = z.strictObject({ url: z.url() });
+
+export const ServiceActionRequestSchema = z.strictObject({});
+
+export const ServiceRuntimeStatusResponseSchema = z.strictObject({
+  snapshot: RunSnapshotSchema.nullable(),
+  ownership: z.enum(["owned", "exited", "unknown"]).nullable(),
+});
+
+const ServiceStartOutcomeSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("started"), snapshot: RunSnapshotSchema }),
+  z.strictObject({ kind: z.literal("existing"), snapshot: RunSnapshotSchema }),
+  z.strictObject({
+    kind: z.literal("failed"),
+    snapshot: RunSnapshotSchema,
+    reason: z.string().min(1).max(512),
+  }),
+  z.strictObject({
+    kind: z.literal("rejected"),
+    snapshot: RunSnapshotSchema,
+    reason: z.string().min(1).max(512),
+  }),
+]);
+
+export const ServiceStartResponseSchema = z.strictObject({ outcome: ServiceStartOutcomeSchema });
+
+const ServiceStopOutcomeSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("stopped"), snapshot: RunSnapshotSchema }),
+  z.strictObject({
+    kind: z.literal("already_stopped"),
+    snapshot: RunSnapshotSchema.nullable(),
+  }),
+  z.strictObject({
+    kind: z.literal("incomplete"),
+    snapshot: RunSnapshotSchema,
+    reason: z.string().min(1).max(512),
+  }),
+]);
+
+export const ServiceStopResponseSchema = z.strictObject({ outcome: ServiceStopOutcomeSchema });

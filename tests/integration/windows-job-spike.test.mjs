@@ -1,17 +1,55 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { NpmLauncher } from "../../packages/platform/dist/index.js";
 
-const jobHelper = fileURLToPath(new URL("../fixtures/windows-job-spike.ps1", import.meta.url));
+const jobHelper = fileURLToPath(
+  new URL("../../packages/platform/assets/windows-job-helper.ps1", import.meta.url),
+);
 const orphanParent = fileURLToPath(new URL("../fixtures/job-orphan-parent.mjs", import.meta.url));
 const outputFlood = fileURLToPath(new URL("../fixtures/job-output-flood.mjs", import.meta.url));
 const httpFixture = fileURLToPath(new URL("../fixtures/http-server.mjs", import.meta.url));
+const environmentMarker = "café-東京";
+let launcherPromise;
+
+function getLauncher() {
+  launcherPromise ??= NpmLauncher.locate();
+  return launcherPromise;
+}
+
+async function sendLaunch(
+  helper,
+  { scriptPath, readyFile, args = [], canonicalCwd = dirname(scriptPath), sourceEnv = process.env },
+) {
+  const launcher = await getLauncher();
+  const plan = launcher.plan("devdock-job-probe", canonicalCwd, sourceEnv);
+  const payload = JSON.stringify({
+    executable: process.execPath,
+    args: [scriptPath, ...args],
+    canonicalCwd,
+    environment: {
+      ...plan.env,
+      DEVDOCK_READY_FILE: readyFile,
+      DEVDOCK_ENV_MARKER: environmentMarker,
+    },
+  });
+  const request = JSON.stringify({
+    type: "launch",
+    data: Buffer.from(payload, "utf8").toString("base64"),
+  });
+  await new Promise((resolve, reject) => {
+    helper.stdin.write(`${request}\n`, (error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+}
 
 function eventReader(stream) {
   const lines = createInterface({ input: stream });
@@ -135,6 +173,23 @@ test("Windows Job Object owns an orphaned child without touching an external sen
   assert.equal(dirname(cleanupRoot), resolve(tmpdir()));
   assert.ok(basename(cleanupRoot).startsWith("devdock-job-spike-"));
   const readyFile = join(tempRoot, "ready.json");
+  const launchCwd = join(tempRoot, "cwd café & [job]");
+  await mkdir(launchCwd);
+  const wrapperPath = join(launchCwd, "probe café & [wrapper].mjs");
+  await writeFile(
+    wrapperPath,
+    `await import(${JSON.stringify(pathToFileURL(orphanParent).href)});`,
+  );
+  const launchArgs = [
+    "plain",
+    "space value",
+    "café 東京",
+    'quote"value',
+    "trailing\\",
+    'slashes\\\\before"quote',
+    "&|<>^%!",
+    "",
+  ];
   const sentinel = spawn(process.execPath, [httpFixture], {
     env: { ...process.env, PORT: "0" },
     stdio: ["ignore", "pipe", "pipe", "ipc"],
@@ -149,25 +204,30 @@ test("Windows Job Object owns an orphaned child without touching an external sen
     const sentinelUrl = `http://127.0.0.1:${sentinelReady.port}/ready`;
     assert.equal((await fetch(sentinelUrl)).status, 200);
 
+    const helperEnvironment = {
+      ...process.env,
+      DEVDOCK_DAEMON_SECRET: "must-not-reach-the-job",
+    };
     helper = spawn(
       powershell,
-      [
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        jobHelper,
-        process.execPath,
-        orphanParent,
-        readyFile,
-      ],
-      { stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
+      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", jobHelper],
+      {
+        env: helperEnvironment,
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      },
     );
     helperEvents = eventReader(helper.stdout);
     helper.stderr.setEncoding("utf8");
     helper.stderr.on("data", (chunk) => {
       helperError += chunk;
+    });
+    await sendLaunch(helper, {
+      scriptPath: wrapperPath,
+      readyFile,
+      args: launchArgs,
+      canonicalCwd: launchCwd,
+      sourceEnv: helperEnvironment,
     });
     const ready = await helperEvents.next("job-ready").catch((caught) => {
       throw new Error(`${caught.message}; helper stderr: ${helperError}`);
@@ -180,6 +240,12 @@ test("Windows Job Object owns an orphaned child without touching an external sen
     const orphan = await waitForFile(readyFile);
     assert.equal(orphan.parentPid, ready.pid);
     assert.notEqual(orphan.childPid, sentinel.pid);
+    assert.equal(orphan.environmentMarker, environmentMarker);
+    assert.equal(orphan.daemonSecretPresent, false);
+    assert.equal(orphan.pathPresent, true);
+    assert.equal(orphan.cwd, launchCwd);
+    assert.equal(orphan.scriptPath, wrapperPath);
+    assert.deepEqual(orphan.args, launchArgs);
     assert.equal(hasExited(helper), false, `Job helper exited: ${helperError}`);
     helper.stdin.write("status\n");
     const earlyStatus = await helperEvents.next("job-status");
@@ -248,17 +314,7 @@ test("Windows Job Object output forwarding stays bounded under caller backpressu
   const readyFile = join(tempRoot, "ready.json");
   const helper = spawn(
     powershell,
-    [
-      "-NoProfile",
-      "-NonInteractive",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-File",
-      jobHelper,
-      process.execPath,
-      outputFlood,
-      readyFile,
-    ],
+    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", jobHelper],
     { stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
   );
   const helperEvents = eventReader(helper.stdout);
@@ -268,6 +324,7 @@ test("Windows Job Object output forwarding stays bounded under caller backpressu
     helperError = (helperError + chunk).slice(-4_096);
   });
   try {
+    await sendLaunch(helper, { scriptPath: outputFlood, readyFile });
     await helperEvents.next("job-ready").catch((caught) => {
       throw new Error(`${caught.message}; helper stderr: ${helperError}`);
     });
@@ -280,10 +337,9 @@ test("Windows Job Object output forwarding stays bounded under caller backpressu
     helper.stdout.resume();
     const gap = await helperEvents.next("job-output-gap", 8_000);
     assert.ok(gap.droppedBytes > 0, "backpressure should drop output beyond the bounded queue");
-
-    helper.stdin.write("stop\n");
-    const stopped = await helperEvents.next("job-stopped");
-    assert.equal(stopped.activeProcesses, 0);
+    const exited = await helperEvents.next("job-exited", 8_000);
+    assert.equal(exited.rootExitCode, 7);
+    assert.equal(exited.activeProcesses, 0);
     assert.equal(await waitForExit(helper), 0);
   } finally {
     helper.stdout.resume();
@@ -310,17 +366,7 @@ test("Windows Job Object closes orphaned child when the helper dies unexpectedly
   const readyFile = join(tempRoot, "ready.json");
   const helper = spawn(
     powershell,
-    [
-      "-NoProfile",
-      "-NonInteractive",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-File",
-      jobHelper,
-      process.execPath,
-      orphanParent,
-      readyFile,
-    ],
+    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", jobHelper],
     { stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
   );
   const helperEvents = eventReader(helper.stdout);
@@ -330,6 +376,7 @@ test("Windows Job Object closes orphaned child when the helper dies unexpectedly
     helperError += chunk;
   });
   try {
+    await sendLaunch(helper, { scriptPath: orphanParent, readyFile });
     const ready = await helperEvents.next("job-ready").catch((caught) => {
       throw new Error(`${caught.message}; helper stderr: ${helperError}`);
     });

@@ -11,6 +11,7 @@ import fastify, { type FastifyRequest } from "fastify";
 import { type ProjectRegistry, ProjectRegistryError } from "./project-registry.js";
 import { registerProjectRoutes } from "./project-routes.js";
 import type { RunLogBuffer } from "./run-log-buffer.js";
+import type { ServiceRuntimeManager } from "./service-runtime-manager.js";
 
 const COOKIE_NAME = "devdock_session";
 const PAIRING_TTL_MS = 5 * 60_000;
@@ -58,6 +59,7 @@ export interface LocalApiOptions {
   launcher?: NpmLauncher;
   webRoot?: string;
   logBuffers?: ReadonlyMap<string, RunLogBuffer>;
+  runtime?: ServiceRuntimeManager;
 }
 
 function sequenceCursor(value: unknown): number | null {
@@ -108,6 +110,13 @@ export function createLocalApiServer(options: LocalApiOptions = {}) {
   if ((options.registry === undefined) !== (options.launcher === undefined)) {
     throw new Error("Registry and launcher must be configured together");
   }
+  if (options.runtime !== undefined && options.registry === undefined) {
+    throw new Error("Service runtime requires a registry and launcher");
+  }
+  if (options.runtime !== undefined && options.logBuffers !== undefined) {
+    throw new Error("Service runtime provides its own log buffers");
+  }
+  const logBuffers = options.runtime?.logBuffers ?? options.logBuffers;
   const now = options.now ?? Date.now;
   const app = fastify({ logger: false, bodyLimit: 1_024, trustProxy: false });
   const pairingCode = randomToken(16);
@@ -258,7 +267,7 @@ export function createLocalApiServer(options: LocalApiOptions = {}) {
     if (query === null) {
       return reply.code(400).send(error("REQUEST_INVALID", "Event cursor is invalid"));
     }
-    const source = query.runId === undefined ? undefined : options.logBuffers?.get(query.runId);
+    const source = query.runId === undefined ? undefined : logBuffers?.get(query.runId);
     if (query.runId !== undefined && (source === undefined || source.runId !== query.runId)) {
       return reply.code(404).send(error("RUN_NOT_FOUND", "Run log is not available"));
     }
@@ -337,10 +346,11 @@ export function createLocalApiServer(options: LocalApiOptions = {}) {
       response.end();
     }
     eventClients.clear();
+    await options.runtime?.close();
   });
 
   if (options.registry !== undefined && options.launcher !== undefined) {
-    registerProjectRoutes(app, options.registry, options.launcher);
+    registerProjectRoutes(app, options.registry, options.launcher, options.runtime);
   }
 
   if (options.webRoot !== undefined) {

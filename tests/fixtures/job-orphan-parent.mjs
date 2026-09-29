@@ -36,7 +36,17 @@ child.stdout.on("data", (chunk) => {
   }
   writeFileSync(
     `${readyFile}.tmp`,
-    JSON.stringify({ parentPid: process.pid, childPid: child.pid, port: event.port }),
+    JSON.stringify({
+      parentPid: process.pid,
+      childPid: child.pid,
+      port: event.port,
+      environmentMarker: process.env.DEVDOCK_ENV_MARKER ?? null,
+      daemonSecretPresent: "DEVDOCK_DAEMON_SECRET" in process.env,
+      pathPresent: typeof (process.env.Path ?? process.env.PATH) === "string",
+      cwd: process.cwd(),
+      scriptPath: process.argv[1],
+      args: process.argv.slice(2),
+    }),
   );
   renameSync(`${readyFile}.tmp`, readyFile);
   // Deliberately leave the HTTP child running after its direct parent exits.

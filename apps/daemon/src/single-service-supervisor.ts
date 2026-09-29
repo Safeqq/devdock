@@ -26,12 +26,24 @@ export interface SupervisorInspection {
   ownership: OwnershipInspection | null;
 }
 
+export interface SingleServiceSupervisorOptions {
+  readonly serviceId?: string;
+  readonly graceTimeoutMs?: number;
+  readonly forceTimeoutMs?: number;
+  readonly onSnapshot?: (snapshot: RunSnapshot) => void;
+  readonly onSnapshotError?: (error: unknown) => void;
+}
+
 export class SingleServiceSupervisor {
   readonly #adapter: ProcessAdapter;
   readonly #request: RequestBase;
+  readonly #serviceId: string;
   readonly #graceTimeoutMs: number;
   readonly #forceTimeoutMs: number;
+  readonly #onSnapshot: ((snapshot: RunSnapshot) => void) | undefined;
+  readonly #onSnapshotError: ((error: unknown) => void) | undefined;
   #handle: ManagedProcessHandle | undefined;
+  #latestStreams: { runId: string; stdout: Readable; stderr: Readable } | undefined;
   #snapshot: RunSnapshot | null = null;
   #stopRequestedRunId: string | undefined;
   #tail: Promise<void> = Promise.resolve();
@@ -39,12 +51,15 @@ export class SingleServiceSupervisor {
   constructor(
     adapter: ProcessAdapter,
     request: RequestBase,
-    options: { graceTimeoutMs?: number; forceTimeoutMs?: number } = {},
+    options: SingleServiceSupervisorOptions = {},
   ) {
     this.#adapter = adapter;
     this.#request = { ...request, args: [...request.args], env: { ...request.env } };
+    this.#serviceId = options.serviceId ?? "fixture";
     this.#graceTimeoutMs = options.graceTimeoutMs ?? 3_000;
     this.#forceTimeoutMs = options.forceTimeoutMs ?? 2_000;
+    this.#onSnapshot = options.onSnapshot;
+    this.#onSnapshotError = options.onSnapshotError;
     if (
       !Number.isSafeInteger(this.#graceTimeoutMs) ||
       this.#graceTimeoutMs <= 0 ||
@@ -60,9 +75,9 @@ export class SingleServiceSupervisor {
   }
 
   streamsFor(runId: string): { stdout: Readable; stderr: Readable } | null {
-    const handle = this.#handle;
-    if (handle === undefined || handle.runId !== runId) return null;
-    return { stdout: handle.stdout, stderr: handle.stderr };
+    const streams = this.#latestStreams;
+    if (streams === undefined || streams.runId !== runId) return null;
+    return { stdout: streams.stdout, stderr: streams.stderr };
   }
 
   async inspect(): Promise<SupervisorInspection> {
@@ -119,6 +134,15 @@ export class SingleServiceSupervisor {
   #set(snapshot: RunSnapshot): RunSnapshot {
     const validated = RunSnapshotSchema.parse(snapshot);
     this.#snapshot = validated;
+    try {
+      this.#onSnapshot?.({ ...validated });
+    } catch (error) {
+      try {
+        this.#onSnapshotError?.(error);
+      } catch {
+        // Reporting a history-write failure must not release or lose the live process handle.
+      }
+    }
     return { ...validated };
   }
 
@@ -164,7 +188,7 @@ export class SingleServiceSupervisor {
     const runId = randomUUID();
     const starting = this.#set({
       runId,
-      serviceId: "fixture",
+      serviceId: this.#serviceId,
       processState: "starting",
       readinessState: "unknown",
       reconciliationState: "known",
@@ -186,6 +210,11 @@ export class SingleServiceSupervisor {
     }
 
     this.#handle = spawned;
+    this.#latestStreams = {
+      runId: spawned.runId,
+      stdout: spawned.stdout,
+      stderr: spawned.stderr,
+    };
     if (spawned.runId !== runId) {
       const snapshot = this.#set({
         ...starting,

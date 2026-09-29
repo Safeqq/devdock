@@ -2,14 +2,28 @@ import {
   RegisterProjectRequestSchema,
   RegistryIdSchema,
   SelectServiceRequestSchema,
+  ServiceActionRequestSchema,
+  ServiceRuntimeStatusResponseSchema,
+  ServiceStartResponseSchema,
+  ServiceStopResponseSchema,
 } from "@devdock/contracts";
 import type { NpmLauncher } from "@devdock/platform";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { ProjectRegistry } from "./project-registry.js";
+import type { ServiceRuntimeManager } from "./service-runtime-manager.js";
 
 function invalid(reply: FastifyReply) {
   return reply.code(400).send({
     error: { code: "REQUEST_INVALID", message: "Request data is invalid" },
+  });
+}
+
+function lifecycleUnavailable(reply: FastifyReply) {
+  return reply.code(501).send({
+    error: {
+      code: "SERVICE_CONTROL_UNAVAILABLE",
+      message: "Service control is unavailable on this platform",
+    },
   });
 }
 
@@ -23,6 +37,7 @@ export function registerProjectRoutes(
   app: FastifyInstance,
   registry: ProjectRegistry,
   launcher: NpmLauncher,
+  runtime?: ServiceRuntimeManager,
 ): void {
   app.get("/api/projects", async () => ({ projects: registry.listProjects() }));
 
@@ -90,5 +105,40 @@ export function registerProjectRoutes(
     const id = idFrom(request.params);
     if (id === null) return invalid(reply);
     return { url: await registry.openAppUrl(id) };
+  });
+
+  app.get("/api/services/:id/status", async (request, reply) => {
+    const id = idFrom(request.params);
+    if (id === null) return invalid(reply);
+    if (runtime === undefined) return lifecycleUnavailable(reply);
+    return ServiceRuntimeStatusResponseSchema.parse(await runtime.status(id));
+  });
+
+  app.post("/api/services/:id/start", async (request, reply) => {
+    const id = idFrom(request.params);
+    if (id === null || !ServiceActionRequestSchema.safeParse(request.body).success) {
+      return invalid(reply);
+    }
+    if (runtime === undefined) return lifecycleUnavailable(reply);
+    const response = ServiceStartResponseSchema.parse({ outcome: await runtime.start(id) });
+    const status =
+      response.outcome.kind === "started"
+        ? 202
+        : response.outcome.kind === "existing"
+          ? 200
+          : response.outcome.kind === "rejected"
+            ? 409
+            : 500;
+    return reply.code(status).send(response);
+  });
+
+  app.post("/api/services/:id/stop", async (request, reply) => {
+    const id = idFrom(request.params);
+    if (id === null || !ServiceActionRequestSchema.safeParse(request.body).success) {
+      return invalid(reply);
+    }
+    if (runtime === undefined) return lifecycleUnavailable(reply);
+    const response = ServiceStopResponseSchema.parse({ outcome: await runtime.stop(id) });
+    return reply.code(response.outcome.kind === "incomplete" ? 409 : 200).send(response);
   });
 }

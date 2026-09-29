@@ -171,7 +171,7 @@ test("authenticated project API persists selections and only previews npm execut
           mutation(origin, cookie, csrfToken, {}),
         )
       ).status,
-      404,
+      501,
     );
 
     const archived = await call(

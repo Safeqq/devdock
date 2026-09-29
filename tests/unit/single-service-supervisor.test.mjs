@@ -71,7 +71,7 @@ class FakeAdapter {
   }
 }
 
-function supervisor(adapter) {
+function supervisor(adapter, options = {}) {
   return new SingleServiceSupervisor(
     adapter,
     {
@@ -80,7 +80,7 @@ function supervisor(adapter) {
       canonicalCwd: ".",
       env: {},
     },
-    { graceTimeoutMs: 10, forceTimeoutMs: 10 },
+    { graceTimeoutMs: 10, forceTimeoutMs: 10, ...options },
   );
 }
 
@@ -193,4 +193,41 @@ test("unexpected exit records the exit code and does not corrupt a newer run", a
   assert.equal(subject.snapshot().runId, second.snapshot.runId);
   assert.equal(subject.snapshot().processState, "running");
   assert.equal((await subject.stop()).kind, "stopped");
+});
+
+test("snapshot observer receives the real service ID and background terminal state", async () => {
+  const adapter = new FakeAdapter();
+  const snapshots = [];
+  const subject = supervisor(adapter, {
+    serviceId: "service-observed",
+    onSnapshot: (snapshot) => snapshots.push(snapshot),
+  });
+  const started = await subject.start();
+  adapter.close(adapter.records[0].handle, 9);
+  await subject.inspect();
+
+  assert.equal(started.snapshot.serviceId, "service-observed");
+  assert.ok(snapshots.length >= 3);
+  assert.equal(snapshots.at(-1).serviceId, "service-observed");
+  assert.equal(snapshots.at(-1).processState, "failed");
+  assert.equal(snapshots.at(-1).exitCode, 9);
+});
+
+test("snapshot history failure does not release the owned process", async () => {
+  const adapter = new FakeAdapter();
+  let observerErrors = 0;
+  const subject = supervisor(adapter, {
+    onSnapshot: () => {
+      throw new Error("simulated history failure");
+    },
+    onSnapshotError: () => {
+      observerErrors += 1;
+    },
+  });
+
+  const started = await subject.start();
+  assert.equal(started.kind, "started");
+  assert.equal((await subject.inspect()).ownership, "owned");
+  assert.equal((await subject.stop()).kind, "stopped");
+  assert.ok(observerErrors >= 3);
 });

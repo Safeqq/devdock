@@ -204,6 +204,14 @@ test("authenticated service lifecycle API starts, streams, inspects, and stops a
     const serviceUrl = `http://127.0.0.1:${ready.port}/ready`;
     assert.equal((await fetch(serviceUrl)).status, 200);
 
+    const activeArchive = await call(
+      origin,
+      `/api/projects/${project.id}/archive`,
+      mutation(origin, cookie, csrfToken, {}),
+    );
+    assert.equal(activeArchive.status, 409);
+    assert.equal((await activeArchive.json()).error.code, "PROJECT_HAS_ACTIVE_SERVICES");
+
     const stoppedResponse = await call(
       origin,
       `/api/services/${service.id}/stop`,
@@ -225,6 +233,16 @@ test("authenticated service lifecycle API starts, streams, inspects, and stops a
     assert.equal(final.snapshot.processState, "stopped");
     assert.equal(final.ownership, null);
     assert.equal(store.listRuns(service.id).at(-1).processState, "stopped");
+    assert.equal(
+      (
+        await call(
+          origin,
+          `/api/projects/${project.id}/archive`,
+          mutation(origin, cookie, csrfToken, {}),
+        )
+      ).status,
+      200,
+    );
   } finally {
     await reader?.cancel();
     await api?.close();

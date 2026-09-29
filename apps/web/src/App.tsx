@@ -19,6 +19,7 @@ import {
   type ProjectDetail,
   safeOpenAppUrl,
 } from "./api";
+import { ServiceRuntimeCard } from "./ServiceRuntimeCard";
 
 type SessionState =
   | { kind: "checking" }
@@ -107,6 +108,7 @@ function Dashboard({
   const [expectedPort, setExpectedPort] = useState("");
   const [previews, setPreviews] = useState<Record<string, CommandPreview>>({});
   const [openLinks, setOpenLinks] = useState<Record<string, string>>({});
+  const [selectedRuntimeServiceId, setSelectedRuntimeServiceId] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -156,6 +158,7 @@ function Dashboard({
     setDiscoveryError(null);
     setPreviews({});
     setOpenLinks({});
+    setSelectedRuntimeServiceId(null);
     if (selectedId === null) return;
     const controller = new AbortController();
     setDetailLoading(true);
@@ -198,6 +201,7 @@ function Dashboard({
     setCwdInput(".");
     setDiscoveredCwd(".");
     setScriptName("");
+    setSelectedRuntimeServiceId(null);
     setError(null);
   }
 
@@ -488,62 +492,41 @@ function Dashboard({
               ) : null}
               <div className="service-list">
                 {detail.services.map((service) => (
-                  <article className="service-card" key={service.id}>
-                    <div className="service-title">
-                      <div>
-                        <h4>{service.displayName}</h4>
-                        <p className="muted">
-                          npm run {service.scriptName}
-                          {service.expectedPort ? ` · port ${service.expectedPort}` : ""}
-                        </p>
-                      </div>
-                      <span className="status-chip">Configured</span>
-                    </div>
-                    <div className="actions">
-                      <button
-                        type="button"
-                        className="quiet"
-                        onClick={() => void showPreview(service.id)}
-                      >
-                        View command
-                      </button>
-                      <button
-                        type="button"
-                        className="quiet"
-                        onClick={() => void prepareOpenApp(service.id)}
-                      >
-                        Prepare Open App
-                      </button>
-                      {openLinks[service.id] && (
-                        <a
-                          className="button-link"
-                          href={openLinks[service.id]}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          Open App ↗
-                        </a>
-                      )}
-                    </div>
-                    {previews[service.id] && (
-                      <div className="preview">
-                        <strong>Command preview</strong>
-                        <pre>{JSON.stringify(previews[service.id], null, 2)}</pre>
-                      </div>
-                    )}
-                  </article>
+                  <ServiceRuntimeCard
+                    key={service.id}
+                    service={service}
+                    csrfToken={csrfToken}
+                    selected={selectedRuntimeServiceId === service.id}
+                    {...(previews[service.id] === undefined
+                      ? {}
+                      : { preview: previews[service.id] })}
+                    {...(openLinks[service.id] === undefined
+                      ? {}
+                      : { openLink: openLinks[service.id] })}
+                    onSelect={() => setSelectedRuntimeServiceId(service.id)}
+                    onPreview={() => void showPreview(service.id)}
+                    onPrepareOpenApp={() => void prepareOpenApp(service.id)}
+                    onUnauthorized={onUnauthorized}
+                    onError={handleError}
+                  />
                 ))}
               </div>
             </section>
 
-            <section className="panel log-panel">
-              <span className="eyebrow">Runtime</span>
-              <h3>Logs and controls</h3>
-              <p>
-                Script control and live logs will appear after safe process cleanup is available.
-                Import and preview only read project configuration.
-              </p>
-            </section>
+            {selectedRuntimeServiceId === null && detail.services.length > 0 ? (
+              <section className="panel log-panel">
+                <span className="eyebrow">Runtime</span>
+                <h3>Logs and controls</h3>
+                <p>Select “View runtime” on a service, or press Start to open its live log view.</p>
+              </section>
+            ) : null}
+            {detail.services.length === 0 ? (
+              <section className="panel log-panel">
+                <span className="eyebrow">Runtime</span>
+                <h3>Logs and controls</h3>
+                <p>Add a service before starting a process.</p>
+              </section>
+            ) : null}
           </>
         )}
       </section>

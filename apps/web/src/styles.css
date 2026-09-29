@@ -125,6 +125,22 @@ p {
   font-size: 0.67rem;
   padding: 0.32rem 0.6rem;
 }
+.status-chip.state-running {
+  color: #b9f5d1;
+  border-color: #3a7d61;
+  background: #153b31;
+}
+.status-chip.state-starting,
+.status-chip.state-stopping {
+  color: #ffe2a8;
+  border-color: #826a3d;
+  background: #40351f;
+}
+.status-chip.state-failed {
+  color: #ffd1ca;
+  border-color: #925861;
+  background: #45262c;
+}
 .panel {
   border: 1px solid #263b50;
   border-radius: 1.2rem;
@@ -291,6 +307,10 @@ button.danger {
   border-radius: 0.8rem;
   background: #102235;
 }
+.service-card.runtime-selected {
+  border-color: #4aaab6;
+  box-shadow: 0 0 0 1px rgba(74, 170, 182, 0.18);
+}
 .service-title .muted {
   margin: 0;
   font-size: 0.8rem;
@@ -326,6 +346,121 @@ button.danger {
   color: #ffd1ca;
   background: #45262c;
   border: 1px solid #925861;
+}
+.warning {
+  color: #ffe6b5;
+  background: #44371f;
+  border: 1px solid #866b36;
+}
+.message.compact {
+  margin: 0.85rem 0 0;
+  padding: 0.65rem 0.8rem;
+  font-size: 0.78rem;
+}
+.runtime-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.6rem;
+  margin: 1rem 0 0;
+}
+.runtime-facts div {
+  min-width: 0;
+  padding: 0.65rem;
+  border: 1px solid #2e465b;
+  border-radius: 0.55rem;
+  background: #0b1c2b;
+}
+.runtime-facts dt {
+  margin-bottom: 0.25rem;
+  color: #86a2b8;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.runtime-facts dd {
+  overflow: hidden;
+  margin: 0;
+  color: #dceaf3;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.runtime-view {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #32495e;
+}
+.runtime-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.runtime-heading h4 {
+  margin-bottom: 0;
+}
+.connection-state {
+  border: 1px solid #3c576c;
+  border-radius: 999px;
+  padding: 0.3rem 0.55rem;
+  color: #aebfce;
+  background: #13283a;
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.connection-state.live {
+  color: #b9f5d1;
+  border-color: #3a7d61;
+  background: #153b31;
+}
+.connection-state.connecting {
+  color: #ffe2a8;
+  border-color: #826a3d;
+  background: #40351f;
+}
+.connection-state.disconnected {
+  color: #ffd1ca;
+  border-color: #925861;
+  background: #45262c;
+}
+.log-lines {
+  display: grid;
+  gap: 0.3rem;
+  max-height: 24rem;
+  overflow: auto;
+  margin: 0.8rem 0 0;
+  padding: 0.75rem;
+  list-style: none;
+  border: 1px solid #293f53;
+  border-radius: 0.55rem;
+  background: #071522;
+}
+.log-lines li {
+  display: grid;
+  grid-template-columns: 3.7rem minmax(0, 1fr);
+  gap: 0.65rem;
+  align-items: start;
+}
+.log-lines code {
+  overflow-wrap: anywhere;
+  color: #cbe0ed;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.log-stream {
+  color: #7fcdd4;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.65rem;
+  font-weight: 800;
+  line-height: 1.7;
+  text-transform: uppercase;
+}
+.log-stream.stderr {
+  color: #ffb9ad;
 }
 .empty-state {
   min-height: 13rem;
@@ -381,6 +516,9 @@ button.danger {
   }
   .form-row {
     grid-template-columns: 1fr;
+  }
+  .runtime-facts {
+    grid-template-columns: 1fr 1fr;
   }
   .project-header,
   .service-title {

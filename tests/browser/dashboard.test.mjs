@@ -1,14 +1,39 @@
 import assert from "node:assert/strict";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "playwright-core";
 import { createLocalApiServer } from "../../apps/daemon/dist/local-api.js";
 import { ProjectRegistry } from "../../apps/daemon/dist/project-registry.js";
-import { NpmLauncher } from "../../packages/platform/dist/index.js";
+import { ServiceRuntimeManager } from "../../apps/daemon/dist/service-runtime-manager.js";
+import { NpmLauncher, WindowsJobProcessAdapter } from "../../packages/platform/dist/index.js";
 import { RegistryDatabase } from "../../packages/storage/dist/index.js";
+
+const httpFixture = fileURLToPath(new URL("../fixtures/http-server.mjs", import.meta.url));
+
+function cleanupRoot(path, prefix) {
+  const root = resolve(path);
+  assert.equal(dirname(root), resolve(tmpdir()));
+  assert.ok(basename(root).startsWith(prefix));
+  return root;
+}
+
+async function waitForEndpointToClose(url, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      await fetch(url, { signal: AbortSignal.timeout(500) });
+    } catch (caught) {
+      if (caught?.name === "TimeoutError") continue;
+      return;
+    }
+    await delay(50);
+  }
+  throw new Error(`Endpoint stayed open after browser Stop: ${url}`);
+}
 
 async function browserExecutable() {
   const override = process.env.DEVDOCK_TEST_BROWSER;
@@ -51,6 +76,7 @@ test("browser pairs and manages project configuration without executing a script
   timeout: 35_000,
 }, async () => {
   const tempRoot = await mkdtemp(join(tmpdir(), "devdock-browser-"));
+  const safeRoot = cleanupRoot(tempRoot, "devdock-browser-");
   const projectPath = join(tempRoot, "browser café & [project]");
   const markerPath = join(projectPath, "marker.out");
   let store;
@@ -113,6 +139,110 @@ test("browser pairs and manages project configuration without executing a script
     await browser?.close();
     await api?.close();
     store?.close();
-    await rm(tempRoot, { recursive: true, force: true });
+    await rm(safeRoot, { recursive: true, force: true });
+  }
+});
+
+test("browser starts, follows logs, survives tab close, and stops an npm service", {
+  skip: process.platform !== "win32" ? "Requires native Windows Job Objects" : false,
+  timeout: 45_000,
+}, async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "devdock-browser-lifecycle-"));
+  const safeRoot = cleanupRoot(tempRoot, "devdock-browser-lifecycle-");
+  const projectPath = join(tempRoot, "runtime café & [browser]");
+  let store;
+  let api;
+  let browser;
+  try {
+    await mkdir(projectPath);
+    await writeFile(
+      join(projectPath, "package.json"),
+      JSON.stringify({
+        name: "browser-lifecycle-fixture",
+        private: true,
+        scripts: { serve: "node server.mjs" },
+      }),
+      "utf8",
+    );
+    await writeFile(
+      join(projectPath, "server.mjs"),
+      `await import(${JSON.stringify(pathToFileURL(httpFixture).href)});\n`,
+      "utf8",
+    );
+
+    store = await RegistryDatabase.open(join(tempRoot, "data", "registry.sqlite"));
+    const registry = new ProjectRegistry(store);
+    const launcher = await NpmLauncher.locate();
+    const runtime = new ServiceRuntimeManager({
+      registry,
+      launcher,
+      adapterFactory: () => new WindowsJobProcessAdapter(),
+      daemonSessionId: "browser-lifecycle-test",
+    });
+    api = createLocalApiServer({
+      registry,
+      launcher,
+      runtime,
+      webRoot: fileURLToPath(new URL("../../apps/web/dist/", import.meta.url)),
+    });
+    const origin = await api.listen(0);
+    browser = await chromium.launch({ executablePath: await browserExecutable(), headless: true });
+    const context = await browser.newContext();
+    const pageErrors = [];
+    let page = await context.newPage();
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+
+    await page.goto(origin);
+    await page.getByLabel("Pairing code").fill(api.pairingCode);
+    await page.getByRole("button", { name: "Pair browser" }).click();
+    await page.getByRole("heading", { name: "Projects" }).waitFor();
+    await page.getByLabel("Folder path").fill(projectPath);
+    await page.getByLabel("Display name (optional)").fill("Runtime Browser Fixture");
+    await page.getByRole("button", { name: "Add project" }).click();
+    await page.getByRole("heading", { name: "Runtime Browser Fixture" }).waitFor();
+    await page.getByRole("button", { name: "Add service" }).click();
+
+    let serviceCard = page.locator("article.service-card").filter({ hasText: "npm run serve" });
+    await serviceCard.getByRole("heading", { name: "serve", exact: true }).waitFor();
+    await serviceCard.getByRole("button", { name: "Start serve" }).click();
+    await serviceCard.locator(".status-chip").getByText("Running", { exact: true }).waitFor();
+    const readyLine = serviceCard
+      .getByRole("list", { name: "serve logs" })
+      .locator("code")
+      .filter({ hasText: '"type":"listening"' });
+    await readyLine.waitFor({ timeout: 10_000 });
+    const ready = JSON.parse(await readyLine.last().textContent());
+    const serviceUrl = `http://127.0.0.1:${ready.port}/ready`;
+    assert.equal((await fetch(serviceUrl)).status, 200);
+
+    await page.close();
+    assert.equal((await fetch(serviceUrl)).status, 200);
+
+    page = await context.newPage();
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    await page.goto(origin);
+    await page.getByRole("heading", { name: "Runtime Browser Fixture" }).waitFor();
+    serviceCard = page.locator("article.service-card").filter({ hasText: "npm run serve" });
+    await serviceCard.locator(".status-chip").getByText("Running", { exact: true }).waitFor();
+    await serviceCard.getByRole("button", { name: "View runtime" }).click();
+    await serviceCard
+      .getByRole("list", { name: "serve logs" })
+      .getByText(/"type":"listening"/u)
+      .waitFor();
+    await serviceCard.getByRole("button", { name: "Stop serve" }).click();
+    await serviceCard.locator(".status-chip").getByText("Stopped", { exact: true }).waitFor();
+    await waitForEndpointToClose(serviceUrl);
+
+    const project = registry.listProjects()[0];
+    assert.ok(project);
+    const service = registry.listServices(project.id)[0];
+    assert.ok(service);
+    assert.equal(store.listRuns(service.id).at(-1).processState, "stopped");
+    assert.deepEqual(pageErrors, []);
+  } finally {
+    await browser?.close();
+    await api?.close();
+    store?.close();
+    await rm(safeRoot, { recursive: true, force: true });
   }
 });

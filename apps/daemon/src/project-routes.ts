@@ -60,6 +60,25 @@ export function registerProjectRoutes(
   app.post("/api/projects/:id/archive", async (request, reply) => {
     const id = idFrom(request.params);
     if (id === null) return invalid(reply);
+    if (runtime !== undefined) {
+      for (const service of registry.listServices(id)) {
+        const { snapshot } = await runtime.status(service.id);
+        if (
+          snapshot !== null &&
+          (snapshot.reconciliationState === "unknown" ||
+            snapshot.processState === "starting" ||
+            snapshot.processState === "running" ||
+            snapshot.processState === "stopping")
+        ) {
+          return reply.code(409).send({
+            error: {
+              code: "PROJECT_HAS_ACTIVE_SERVICES",
+              message: "Stop or reconcile project services before archiving",
+            },
+          });
+        }
+      }
+    }
     return { project: registry.archiveProject(id) };
   });
 

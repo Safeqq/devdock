@@ -118,6 +118,10 @@ function Dashboard({
   const [readinessKind, setReadinessKind] = useState<"none" | "tcp" | "http">("none");
   const [readinessPath, setReadinessPath] = useState("/ready");
   const [readinessTimeout, setReadinessTimeout] = useState("5000");
+  const [restartKind, setRestartKind] = useState<"off" | "on_failure">("off");
+  const [restartAttempts, setRestartAttempts] = useState("3");
+  const [restartInitialBackoff, setRestartInitialBackoff] = useState("1000");
+  const [restartMaxBackoff, setRestartMaxBackoff] = useState("10000");
   const [envFiles, setEnvFiles] = useState("");
   const [requiredEnvKeys, setRequiredEnvKeys] = useState("");
   const [profileName, setProfileName] = useState("");
@@ -295,6 +299,28 @@ function Dashboard({
           : undefined;
     const configuredEnvFiles = configurationList(envFiles);
     const configuredRequiredEnvKeys = configurationList(requiredEnvKeys);
+    const maxAttempts = Number(restartAttempts);
+    const initialBackoffMs = Number(restartInitialBackoff);
+    const maxBackoffMs = Number(restartMaxBackoff);
+    if (
+      restartKind === "on_failure" &&
+      (!Number.isInteger(maxAttempts) ||
+        maxAttempts < 1 ||
+        maxAttempts > 10 ||
+        !Number.isInteger(initialBackoffMs) ||
+        initialBackoffMs < 100 ||
+        initialBackoffMs > 60_000 ||
+        !Number.isInteger(maxBackoffMs) ||
+        maxBackoffMs < initialBackoffMs ||
+        maxBackoffMs > 300_000)
+    ) {
+      setError("Restart limits must use 1-10 attempts and backoff from 100-300000 ms.");
+      return;
+    }
+    const restartPolicy =
+      restartKind === "off"
+        ? ({ kind: "off" } as const)
+        : ({ kind: "on_failure", maxAttempts, initialBackoffMs, maxBackoffMs } as const);
     setBusy(true);
     setError(null);
     try {
@@ -306,6 +332,7 @@ function Dashboard({
           ...(serviceName.trim() ? { displayName: serviceName.trim() } : {}),
           ...(port === undefined ? {} : { expectedPort: port }),
           ...(readiness === undefined ? {} : { readiness }),
+          restartPolicy,
           envFiles: configuredEnvFiles,
           requiredEnvKeys: configuredRequiredEnvKeys,
         },
@@ -317,6 +344,10 @@ function Dashboard({
       setReadinessKind("none");
       setReadinessPath("/ready");
       setReadinessTimeout("5000");
+      setRestartKind("off");
+      setRestartAttempts("3");
+      setRestartInitialBackoff("1000");
+      setRestartMaxBackoff("10000");
       setEnvFiles("");
       setRequiredEnvKeys("");
       setRefresh((value) => value + 1);
@@ -627,6 +658,62 @@ function Dashboard({
                       <small className="field-help">
                         Requests stay on 127.0.0.1. Redirect responses are not followed.
                       </small>
+                    </div>
+                  ) : null}
+                  <div className="form-row">
+                    <div className="stack">
+                      <label htmlFor="restart-kind">Automatic restart</label>
+                      <select
+                        id="restart-kind"
+                        value={restartKind}
+                        onChange={(event) =>
+                          setRestartKind(event.target.value as "off" | "on_failure")
+                        }
+                      >
+                        <option value="off">Off</option>
+                        <option value="on_failure">On failure</option>
+                      </select>
+                    </div>
+                    <div className="stack">
+                      <label htmlFor="restart-attempts">Maximum attempts</label>
+                      <input
+                        id="restart-attempts"
+                        type="number"
+                        min="1"
+                        max="10"
+                        value={restartAttempts}
+                        onChange={(event) => setRestartAttempts(event.target.value)}
+                        disabled={restartKind === "off"}
+                        required={restartKind === "on_failure"}
+                      />
+                    </div>
+                  </div>
+                  {restartKind === "on_failure" ? (
+                    <div className="form-row">
+                      <div className="stack">
+                        <label htmlFor="restart-initial-backoff">Initial backoff (ms)</label>
+                        <input
+                          id="restart-initial-backoff"
+                          type="number"
+                          min="100"
+                          max="60000"
+                          value={restartInitialBackoff}
+                          onChange={(event) => setRestartInitialBackoff(event.target.value)}
+                          required
+                        />
+                      </div>
+                      <div className="stack">
+                        <label htmlFor="restart-max-backoff">Maximum backoff (ms)</label>
+                        <input
+                          id="restart-max-backoff"
+                          type="number"
+                          min="100"
+                          max="300000"
+                          value={restartMaxBackoff}
+                          onChange={(event) => setRestartMaxBackoff(event.target.value)}
+                          required
+                        />
+                      </div>
                     </div>
                   ) : null}
                   <div className="form-row">

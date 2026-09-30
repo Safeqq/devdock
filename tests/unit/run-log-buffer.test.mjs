@@ -112,3 +112,33 @@ test("a failing live viewer cannot interrupt stream capture", () => {
   assert.deepEqual(seen, [1, 2]);
   assert.equal(logs.replay().latestSequence, 3);
 });
+
+test("default limits retain only the newest 5000 lines during a log flood", () => {
+  const logs = buffer();
+  const lines = Array.from({ length: 6_250 }, (_, index) => `line-${index + 1}`).join("\n");
+  logs.push("stdout", `${lines}\n`);
+  const replay = logs.replay();
+  assert.equal(replay.events.length, 5_000);
+  assert.equal(replay.events[0].sequence, 1_251);
+  assert.equal(replay.events.at(-1).sequence, 6_250);
+  assert.equal(replay.gap, true);
+});
+
+test("dispose detaches stream listeners and flushes partial lines", () => {
+  const logs = buffer();
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  logs.capture(stdout, stderr);
+  stdout.write("partial");
+  assert.equal(stdout.listenerCount("data"), 1);
+  assert.equal(stderr.listenerCount("data"), 1);
+
+  logs.dispose();
+
+  assert.equal(stdout.listenerCount("data"), 0);
+  assert.equal(stderr.listenerCount("data"), 0);
+  assert.equal(stdout.listenerCount("end"), 0);
+  assert.equal(stderr.listenerCount("close"), 0);
+  assert.equal(logs.replay().events.at(-1).text, "partial");
+  assert.throws(() => logs.push("stdout", "after disposal\n"), /ended/);
+});

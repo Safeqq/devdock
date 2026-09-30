@@ -138,6 +138,10 @@ test("browser pairs and manages project configuration without executing a script
     await page.getByLabel("App port (optional)").fill("4300");
     await page.getByLabel("Environment files (optional)").fill(".env.browser");
     await page.getByLabel("Required environment keys (optional)").fill("BROWSER_TOKEN");
+    await page.getByLabel("Automatic restart").selectOption("on_failure");
+    await page.getByLabel("Maximum attempts").fill("2");
+    await page.getByLabel("Initial backoff (ms)").fill("250");
+    await page.getByLabel("Maximum backoff (ms)").fill("1000");
     await page.getByRole("button", { name: "Add service" }).click();
     await page.getByRole("heading", { name: "dev" }).waitFor();
     const profileForm = page.locator("form.profile-form");
@@ -148,6 +152,7 @@ test("browser pairs and manages project configuration without executing a script
     await profileCard.getByRole("heading", { name: "Backend Only" }).waitFor();
     await profileCard.locator(".state-pill").getByText("Idle", { exact: true }).waitFor();
     const serviceCard = page.locator("article.service-card").filter({ hasText: "npm run dev" });
+    await serviceCard.getByText("restart up to 2 times", { exact: false }).waitFor();
     await serviceCard.getByRole("button", { name: "Run dev diagnostics" }).click();
     const diagnostics = serviceCard.getByRole("region", { name: "dev diagnostics" });
     await diagnostics.getByRole("list", { name: "Required environment keys" }).waitFor();
@@ -206,7 +211,7 @@ test("browser starts, follows logs, survives tab close, and stops an npm service
     );
     await writeFile(
       join(projectPath, "server.mjs"),
-      `await import(${JSON.stringify(pathToFileURL(httpFixture).href)});\n`,
+      `await import(${JSON.stringify(pathToFileURL(httpFixture).href)});\nawait new Promise((resolve) => setTimeout(resolve, 250));\nfor (let index = 1; index <= 650; index += 1) {\n  console.log(\`flood-\${index}\`);\n  if (index % 20 === 0) await new Promise((resolve) => setTimeout(resolve, 0));\n}\n`,
       "utf8",
     );
     await writeFile(join(projectPath, ".env.lifecycle"), `PORT=${expectedPort}\n`, "utf8");
@@ -259,6 +264,8 @@ test("browser starts, follows logs, survives tab close, and stops an npm service
       .filter({ hasText: '"type":"listening"' });
     await readyLine.waitFor({ timeout: 10_000 });
     const ready = JSON.parse(await readyLine.last().textContent());
+    await serviceCard.locator(".log-lines li").nth(499).waitFor();
+    assert.equal(await serviceCard.locator(".log-lines li").count(), 500);
     assert.equal(ready.port, expectedPort);
     const serviceUrl = `http://127.0.0.1:${expectedPort}/ready`;
     assert.equal((await fetch(serviceUrl)).status, 200);

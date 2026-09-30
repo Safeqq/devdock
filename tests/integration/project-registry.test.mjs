@@ -170,6 +170,7 @@ test("project registry persists selections without running scripts during discov
     assert.equal(store.getService(service.id).scriptName, "mark:ready");
     assert.deepEqual(store.getService(service.id).envFiles, [".env.test"]);
     assert.deepEqual(store.getService(service.id).requiredEnvKeys, ["PROJECT_TOKEN"]);
+    assert.deepEqual(store.getService(service.id).restartPolicy, { kind: "off" });
     assert.deepEqual(store.getProfile(backendProfile.id), backendProfile);
     assert.deepEqual(store.listProfiles(project.id), [backendProfile]);
     assert.equal(store.listRuns(service.id)[0].runId, runId);

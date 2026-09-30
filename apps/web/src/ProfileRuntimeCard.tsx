@@ -63,14 +63,20 @@ export function ProfileRuntimeCard({
   }, [loadStatus]);
 
   useEffect(() => {
-    if (snapshot?.state !== "starting" && snapshot?.state !== "stopping") return;
+    if (
+      snapshot?.state !== "starting" &&
+      snapshot?.state !== "ready" &&
+      snapshot?.state !== "stopping"
+    )
+      return;
     const controller = new AbortController();
     let timer = 0;
     const poll = async () => {
       await loadStatus(controller.signal);
-      if (!controller.signal.aborted) timer = window.setTimeout(() => void poll(), 250);
+      if (!controller.signal.aborted)
+        timer = window.setTimeout(() => void poll(), snapshot.state === "ready" ? 1_000 : 250);
     };
-    timer = window.setTimeout(() => void poll(), 250);
+    timer = window.setTimeout(() => void poll(), snapshot.state === "ready" ? 1_000 : 250);
     return () => {
       controller.abort();
       window.clearTimeout(timer);
@@ -113,6 +119,12 @@ export function ProfileRuntimeCard({
 
   const active =
     snapshot?.state === "starting" || snapshot?.state === "ready" || snapshot?.state === "stopping";
+  const degradedWithRetainedServices =
+    snapshot?.state === "degraded" &&
+    snapshot.services.some(
+      (service) =>
+        service.origin !== "pending" && (service.state === "ready" || service.state === "failed"),
+    );
 
   return (
     <article className="profile-card">
@@ -149,7 +161,7 @@ export function ProfileRuntimeCard({
         <button
           className="primary"
           type="button"
-          disabled={busy || active}
+          disabled={busy || active || degradedWithRetainedServices}
           onClick={() => void start()}
         >
           {snapshot?.state === "degraded" ? "Retry profile" : "Start profile"}
@@ -157,7 +169,7 @@ export function ProfileRuntimeCard({
         <button
           className="quiet danger"
           type="button"
-          disabled={busy || !active}
+          disabled={busy || (!active && !degradedWithRetainedServices)}
           onClick={() => void stop()}
         >
           Stop profile

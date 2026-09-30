@@ -32,12 +32,31 @@ type ReadinessProbeRunner = (
   signal?: AbortSignal,
 ) => Promise<ReadinessProbeResult>;
 
+export interface RestartTimer {
+  cancel(): void;
+}
+
+export type RestartScheduler = (callback: () => void, delayMs: number) => RestartTimer;
+
+interface PendingRestart {
+  readonly runId: string;
+  readonly attempt: number;
+  readonly timer: RestartTimer;
+}
+
+function defaultRestartScheduler(callback: () => void, delayMs: number): RestartTimer {
+  const timer = setTimeout(callback, delayMs);
+  timer.unref();
+  return { cancel: () => clearTimeout(timer) };
+}
+
 export interface ServiceRuntimeManagerOptions {
   readonly registry: ProjectRegistry;
   readonly launcher: NpmLauncher;
   readonly adapterFactory: () => ProcessAdapter;
   readonly daemonSessionId?: string;
   readonly readinessProbe?: ReadinessProbeRunner;
+  readonly restartScheduler?: RestartScheduler;
 }
 
 export type ServiceStartupResult =
@@ -83,12 +102,15 @@ export class ServiceRuntimeManager {
   readonly #launcher: NpmLauncher;
   readonly #adapterFactory: () => ProcessAdapter;
   readonly #readinessProbe: ReadinessProbeRunner;
+  readonly #restartScheduler: RestartScheduler;
   readonly #daemonSessionId: string;
   readonly #runtimes = new Map<string, ManagedServiceRuntime>();
   readonly #tails = new Map<string, Promise<void>>();
   readonly #logBuffers = new Map<string, RunLogBuffer>();
   readonly #logOrder: string[] = [];
   readonly #readinessProbes = new Map<string, ActiveReadinessProbe>();
+  readonly #pendingRestarts = new Map<string, PendingRestart>();
+  readonly #restartAttempts = new Map<string, number>();
   readonly #snapshotSubscribers = new Map<string, Set<(snapshot: RunSnapshot) => void>>();
   #closed = false;
 
@@ -97,7 +119,9 @@ export class ServiceRuntimeManager {
     this.#launcher = options.launcher;
     this.#adapterFactory = options.adapterFactory;
     this.#readinessProbe = options.readinessProbe ?? probeLoopbackReadiness;
+    this.#restartScheduler = options.restartScheduler ?? defaultRestartScheduler;
     this.#daemonSessionId = options.daemonSessionId ?? randomUUID();
+    this.#reconcilePersistedHistory();
   }
 
   get logBuffers(): ReadonlyMap<string, RunLogBuffer> {
@@ -105,45 +129,48 @@ export class ServiceRuntimeManager {
   }
 
   start(serviceId: string): Promise<StartOutcome> {
-    return this.#serialize(serviceId, async () => {
-      if (this.#closed) throw new Error("Service runtime manager is closed");
-      const service = this.#registry.getService(serviceId);
-      let runtime = this.#runtimes.get(serviceId);
-      if (runtime === undefined) {
-        const historical = this.#historicalSnapshot(serviceId);
-        if (needsReconciliation(historical)) {
-          return { kind: "rejected", snapshot: historical, reason: "OWNERSHIP_UNKNOWN" };
-        }
-      }
-      if (runtime === undefined || replaceable(runtime.supervisor.snapshot())) {
-        const plan = await this.#registry.launchPlan(serviceId, this.#launcher);
-        runtime = {
-          supervisor: new SingleServiceSupervisor(this.#adapterFactory(), plan, {
-            serviceId,
-            onSnapshot: (snapshot) => this.#persist(snapshot),
-            onSnapshotError: () => {
-              process.stderr.write(
-                `Could not persist lifecycle history for service ${serviceId}\n`,
-              );
-            },
-          }),
-        };
-        this.#runtimes.set(serviceId, runtime);
-      }
+    this.#cancelPendingRestart(serviceId);
+    this.#restartAttempts.delete(serviceId);
+    return this.#serialize(serviceId, () => this.#startLocked(serviceId));
+  }
 
-      const outcome = await runtime.supervisor.start();
-      if (outcome.kind === "started" || outcome.kind === "existing") {
-        this.#capture(runtime, outcome.snapshot.runId);
+  async #startLocked(serviceId: string): Promise<StartOutcome> {
+    if (this.#closed) throw new Error("Service runtime manager is closed");
+    const service = this.#registry.getService(serviceId);
+    let runtime = this.#runtimes.get(serviceId);
+    if (runtime === undefined) {
+      const historical = this.#historicalSnapshot(serviceId);
+      if (needsReconciliation(historical)) {
+        return { kind: "rejected", snapshot: historical, reason: "OWNERSHIP_UNKNOWN" };
       }
-      if (outcome.kind === "started" && service.readiness !== undefined) {
-        const checking = await runtime.supervisor.setReadiness(outcome.snapshot.runId, "checking");
-        if (checking !== null) {
-          this.#beginReadinessProbe(service, runtime, checking.runId);
-          return { ...outcome, snapshot: checking };
-        }
+    }
+    if (runtime === undefined || replaceable(runtime.supervisor.snapshot())) {
+      const plan = await this.#registry.launchPlan(serviceId, this.#launcher);
+      let managed: ManagedServiceRuntime;
+      const supervisor = new SingleServiceSupervisor(this.#adapterFactory(), plan, {
+        serviceId,
+        onSnapshot: (snapshot) => this.#handleSnapshot(service, managed, snapshot),
+        onSnapshotError: () => {
+          process.stderr.write(`Could not persist lifecycle history for service ${serviceId}\n`);
+        },
+      });
+      managed = { supervisor };
+      runtime = managed;
+      this.#runtimes.set(serviceId, runtime);
+    }
+
+    const outcome = await runtime.supervisor.start();
+    if (outcome.kind === "started" || outcome.kind === "existing") {
+      this.#capture(runtime, outcome.snapshot.runId);
+    }
+    if (outcome.kind === "started" && service.readiness !== undefined) {
+      const checking = await runtime.supervisor.setReadiness(outcome.snapshot.runId, "checking");
+      if (checking !== null) {
+        this.#beginReadinessProbe(service, runtime, checking.runId);
+        return { ...outcome, snapshot: checking };
       }
-      return outcome;
-    });
+    }
+    return outcome;
   }
 
   status(serviceId: string): Promise<SupervisorInspection> {
@@ -162,6 +189,8 @@ export class ServiceRuntimeManager {
   }
 
   stop(serviceId: string): Promise<StopOutcome> {
+    this.#cancelPendingRestart(serviceId);
+    this.#restartAttempts.delete(serviceId);
     this.#cancelReadinessProbe(serviceId);
     return this.#serialize(serviceId, async () => {
       const runtime = this.#runtimes.get(serviceId);
@@ -176,6 +205,17 @@ export class ServiceRuntimeManager {
       this.#evictLogs();
       return outcome;
     });
+  }
+
+  subscribe(serviceId: string, listener: (snapshot: RunSnapshot) => void): () => void {
+    if (this.#closed) throw new Error("Service runtime manager is closed");
+    const subscribers = this.#snapshotSubscribers.get(serviceId) ?? new Set();
+    subscribers.add(listener);
+    this.#snapshotSubscribers.set(serviceId, subscribers);
+    return () => {
+      subscribers.delete(listener);
+      if (subscribers.size === 0) this.#snapshotSubscribers.delete(serviceId);
+    };
   }
 
   waitForStartup(
@@ -238,6 +278,10 @@ export class ServiceRuntimeManager {
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
+    for (const serviceId of this.#pendingRestarts.keys()) {
+      this.#cancelPendingRestart(serviceId);
+    }
+    this.#restartAttempts.clear();
     for (const serviceId of this.#readinessProbes.keys()) {
       this.#cancelReadinessProbe(serviceId);
     }
@@ -251,7 +295,10 @@ export class ServiceRuntimeManager {
         }),
       ),
     );
-    this.#evictLogs();
+    for (const logs of this.#logBuffers.values()) logs.dispose();
+    this.#logBuffers.clear();
+    this.#logOrder.length = 0;
+    this.#snapshotSubscribers.clear();
   }
 
   #capture(runtime: ManagedServiceRuntime, runId: string): void {
@@ -277,6 +324,75 @@ export class ServiceRuntimeManager {
         }
       }
     }
+  }
+
+  #handleSnapshot(
+    service: ServiceConfig,
+    runtime: ManagedServiceRuntime,
+    snapshot: RunSnapshot,
+  ): void {
+    this.#persist(snapshot);
+    if (
+      this.#closed ||
+      this.#runtimes.get(service.id) !== runtime ||
+      runtime.supervisor.snapshot()?.runId !== snapshot.runId ||
+      snapshot.reconciliationState !== "known" ||
+      snapshot.processState !== "failed" ||
+      service.restartPolicy?.kind !== "on_failure"
+    ) {
+      return;
+    }
+    this.#scheduleRestart(service, runtime, snapshot.runId);
+  }
+
+  #scheduleRestart(service: ServiceConfig, runtime: ManagedServiceRuntime, runId: string): void {
+    if (service.restartPolicy?.kind !== "on_failure") return;
+    const current = this.#pendingRestarts.get(service.id);
+    if (current?.runId === runId) return;
+    if (current !== undefined) this.#cancelPendingRestart(service.id);
+    const attempt = (this.#restartAttempts.get(service.id) ?? 0) + 1;
+    if (attempt > service.restartPolicy.maxAttempts) return;
+    const delayMs = Math.min(
+      service.restartPolicy.initialBackoffMs * 2 ** (attempt - 1),
+      service.restartPolicy.maxBackoffMs,
+    );
+    const timer = this.#restartScheduler(() => {
+      const pending = this.#pendingRestarts.get(service.id);
+      if (pending?.runId !== runId || pending.attempt !== attempt) return;
+      this.#pendingRestarts.delete(service.id);
+      this.#restartAttempts.set(service.id, attempt);
+      void this.#serialize(service.id, async () => {
+        if (this.#closed || this.#runtimes.get(service.id) !== runtime) return;
+        const currentSnapshot = runtime.supervisor.snapshot();
+        if (
+          currentSnapshot?.runId !== runId ||
+          currentSnapshot.reconciliationState !== "known" ||
+          currentSnapshot.processState !== "failed"
+        ) {
+          return;
+        }
+        try {
+          const outcome = await this.#startLocked(service.id);
+          if (outcome.kind === "failed") {
+            this.#scheduleRestart(
+              service,
+              this.#runtimes.get(service.id) ?? runtime,
+              outcome.snapshot.runId,
+            );
+          }
+        } catch {
+          this.#scheduleRestart(service, runtime, runId);
+        }
+      });
+    }, delayMs);
+    this.#pendingRestarts.set(service.id, { runId, attempt, timer });
+  }
+
+  #cancelPendingRestart(serviceId: string): void {
+    const pending = this.#pendingRestarts.get(serviceId);
+    if (pending === undefined) return;
+    this.#pendingRestarts.delete(serviceId);
+    pending.timer.cancel();
   }
 
   #beginReadinessProbe(
@@ -356,6 +472,14 @@ export class ServiceRuntimeManager {
     return reconciled;
   }
 
+  #reconcilePersistedHistory(): void {
+    for (const project of this.#registry.listProjects(true)) {
+      for (const service of this.#registry.listServices(project.id)) {
+        this.#historicalSnapshot(service.id);
+      }
+    }
+  }
+
   #evictLogs(): void {
     if (this.#logBuffers.size <= MAX_RETAINED_RUN_LOGS) return;
     const active = new Set<string>();
@@ -367,7 +491,10 @@ export class ServiceRuntimeManager {
       const index = this.#logOrder.findIndex((runId) => !active.has(runId));
       if (index === -1) return;
       const [runId] = this.#logOrder.splice(index, 1);
-      if (runId !== undefined) this.#logBuffers.delete(runId);
+      if (runId !== undefined) {
+        this.#logBuffers.get(runId)?.dispose();
+        this.#logBuffers.delete(runId);
+      }
     }
   }
 

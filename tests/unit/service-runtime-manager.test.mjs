@@ -3,6 +3,111 @@ import { Readable } from "node:stream";
 import { test } from "node:test";
 import { ServiceRuntimeManager } from "../../apps/daemon/dist/service-runtime-manager.js";
 
+async function waitUntil(predicate, message) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error(message);
+}
+
+function fakeRestartScheduler() {
+  const tasks = [];
+  return {
+    tasks,
+    schedule(callback, delayMs) {
+      const task = { callback, delayMs, cancelled: false };
+      tasks.push(task);
+      return { cancel: () => (task.cancelled = true) };
+    },
+    runNext() {
+      const task = tasks.find((candidate) => !candidate.cancelled && !candidate.ran);
+      assert.ok(task, "Expected a pending restart timer");
+      task.ran = true;
+      task.callback();
+    },
+    pending() {
+      return tasks.filter((task) => !task.cancelled && !task.ran);
+    },
+  };
+}
+
+function controlledAdapter() {
+  const runs = [];
+  return {
+    runs,
+    adapter: {
+      async start(request) {
+        let resolveExit;
+        const exit = new Promise((resolve) => {
+          resolveExit = resolve;
+        });
+        const run = { result: null, resolveExit, exit };
+        runs.push(run);
+        return {
+          runId: request.runId,
+          pid: 5_000 + runs.length,
+          identity: `owned-${runs.length}`,
+          ownership: {},
+          gracefulStop: { supported: true },
+          stdout: Readable.from([]),
+          stderr: Readable.from([]),
+          testRun: run,
+        };
+      },
+      async inspectOwnership(handle) {
+        return handle.testRun.result === null ? "owned" : "exited";
+      },
+      async requestGracefulStop(handle) {
+        if (handle.testRun.result === null) {
+          handle.testRun.result = { kind: "exited", code: 0, signal: null };
+          handle.testRun.resolveExit(handle.testRun.result);
+        }
+        return "requested";
+      },
+      async terminateOwnedTree() {
+        return "unsupported";
+      },
+      async waitForExit(handle, timeoutMs) {
+        if (handle.testRun.result !== null) return handle.testRun.result;
+        if (timeoutMs !== undefined) return { kind: "timeout" };
+        return handle.testRun.exit;
+      },
+    },
+    crash(index) {
+      const run = runs[index];
+      assert.ok(run);
+      run.result = { kind: "exited", code: 1, signal: null };
+      run.resolveExit(run.result);
+    },
+  };
+}
+
+function restartRegistry(serviceId, restartPolicy) {
+  let latest = null;
+  return {
+    listProjects() {
+      return [{ id: "project-restart" }];
+    },
+    listServices() {
+      return [{ id: serviceId }];
+    },
+    getService() {
+      return { id: serviceId, restartPolicy };
+    },
+    latestRun() {
+      return latest;
+    },
+    saveRunSnapshot(snapshot) {
+      latest = { ...snapshot };
+      return snapshot;
+    },
+    async launchPlan() {
+      return { executable: "fixture", args: [], canonicalCwd: ".", env: {} };
+    },
+  };
+}
+
 test("historical active run becomes unknown and cannot authorize start or stop", async () => {
   const serviceId = "service-one";
   let stored = {
@@ -16,6 +121,12 @@ test("historical active run becomes unknown and cannot authorize start or stop",
   };
   let adapterCreations = 0;
   const registry = {
+    listProjects() {
+      return [{ id: "project-one" }];
+    },
+    listServices() {
+      return [{ id: serviceId }];
+    },
     getService(id) {
       assert.equal(id, serviceId);
       return { id };
@@ -40,6 +151,9 @@ test("historical active run becomes unknown and cannot authorize start or stop",
       throw new Error("Historical unknown run must block adapter creation");
     },
   });
+
+  assert.equal(stored.reconciliationState, "unknown");
+  assert.equal(stored.failureReason, "DAEMON_RESTART_OWNERSHIP_UNKNOWN");
 
   const status = await runtime.status(serviceId);
   assert.equal(status.snapshot.processState, "stopping");
@@ -66,12 +180,19 @@ test("Stop aborts an in-flight readiness probe before stopping the owned process
     resolveClose = resolve;
   });
   const registry = {
+    listProjects() {
+      return [{ id: "project-one" }];
+    },
+    listServices() {
+      return [{ id: serviceId }];
+    },
     getService(id) {
       assert.equal(id, serviceId);
       return {
         id: serviceId,
         expectedPort: 4_300,
         readiness: { kind: "tcp", timeoutMs: 60_000 },
+        restartPolicy: { kind: "off" },
       };
     },
     latestRun() {
@@ -139,4 +260,139 @@ test("Stop aborts an in-flight readiness probe before stopping the owned process
   assert.equal(stopped.snapshot.processState, "stopped");
   assert.equal(stopped.snapshot.readinessState, "unknown");
   await runtime.close();
+});
+
+test("failure restart policy uses bounded exponential backoff", async () => {
+  const serviceId = "service-restart";
+  const scheduler = fakeRestartScheduler();
+  const process = controlledAdapter();
+  const runtime = new ServiceRuntimeManager({
+    registry: restartRegistry(serviceId, {
+      kind: "on_failure",
+      maxAttempts: 2,
+      initialBackoffMs: 100,
+      maxBackoffMs: 150,
+    }),
+    launcher: {},
+    adapterFactory: () => process.adapter,
+    restartScheduler: scheduler.schedule,
+  });
+  try {
+    await runtime.start(serviceId);
+    process.crash(0);
+    await waitUntil(() => scheduler.pending().length === 1, "First restart was not scheduled");
+    assert.equal(scheduler.pending()[0].delayMs, 100);
+    scheduler.runNext();
+    await waitUntil(() => process.runs.length === 2, "First restart did not run");
+
+    process.crash(1);
+    await waitUntil(() => scheduler.pending().length === 1, "Second restart was not scheduled");
+    assert.equal(scheduler.pending()[0].delayMs, 150);
+    scheduler.runNext();
+    await waitUntil(() => process.runs.length === 3, "Second restart did not run");
+
+    process.crash(2);
+    await waitUntil(
+      () => runtime.logBuffers.size === 3,
+      "Final failed run was not observed before checking the limit",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(scheduler.pending().length, 0);
+  } finally {
+    await runtime.close();
+  }
+});
+
+test("Stop cancels a pending automatic restart", async () => {
+  const serviceId = "service-stop-restart";
+  const scheduler = fakeRestartScheduler();
+  const process = controlledAdapter();
+  const runtime = new ServiceRuntimeManager({
+    registry: restartRegistry(serviceId, {
+      kind: "on_failure",
+      maxAttempts: 3,
+      initialBackoffMs: 100,
+      maxBackoffMs: 1_000,
+    }),
+    launcher: {},
+    adapterFactory: () => process.adapter,
+    restartScheduler: scheduler.schedule,
+  });
+  try {
+    await runtime.start(serviceId);
+    process.crash(0);
+    await waitUntil(() => scheduler.pending().length === 1, "Restart was not scheduled");
+
+    await runtime.stop(serviceId);
+
+    assert.equal(scheduler.pending().length, 0);
+    assert.equal(process.runs.length, 1);
+  } finally {
+    await runtime.close();
+  }
+});
+
+test("restart policy stays off unless explicitly enabled", async () => {
+  const serviceId = "service-no-restart";
+  const scheduler = fakeRestartScheduler();
+  const process = controlledAdapter();
+  const runtime = new ServiceRuntimeManager({
+    registry: restartRegistry(serviceId, { kind: "off" }),
+    launcher: {},
+    adapterFactory: () => process.adapter,
+    restartScheduler: scheduler.schedule,
+  });
+  try {
+    await runtime.start(serviceId);
+    process.crash(0);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(scheduler.tasks.length, 0);
+    assert.equal(process.runs.length, 1);
+  } finally {
+    await runtime.close();
+  }
+});
+
+test("manager close stops an owned run and disposes its log buffer", async () => {
+  const serviceId = "service-close";
+  const process = controlledAdapter();
+  const runtime = new ServiceRuntimeManager({
+    registry: restartRegistry(serviceId, { kind: "off" }),
+    launcher: {},
+    adapterFactory: () => process.adapter,
+  });
+  const started = await runtime.start(serviceId);
+  const logs = runtime.logBuffers.get(started.snapshot.runId);
+  assert.ok(logs);
+
+  await runtime.close();
+
+  assert.equal(process.runs[0].result.code, 0);
+  assert.equal(runtime.logBuffers.size, 0);
+  assert.throws(() => logs.push("stdout", "late output\n"), /ended/);
+});
+
+test("manager close cancels a pending automatic restart", async () => {
+  const serviceId = "service-close-restart";
+  const scheduler = fakeRestartScheduler();
+  const process = controlledAdapter();
+  const runtime = new ServiceRuntimeManager({
+    registry: restartRegistry(serviceId, {
+      kind: "on_failure",
+      maxAttempts: 3,
+      initialBackoffMs: 100,
+      maxBackoffMs: 1_000,
+    }),
+    launcher: {},
+    adapterFactory: () => process.adapter,
+    restartScheduler: scheduler.schedule,
+  });
+  await runtime.start(serviceId);
+  process.crash(0);
+  await waitUntil(() => scheduler.pending().length === 1, "Restart was not scheduled");
+
+  await runtime.close();
+
+  assert.equal(scheduler.pending().length, 0);
+  assert.equal(process.runs.length, 1);
 });

@@ -132,7 +132,12 @@ export function createLocalApiServer(options: LocalApiOptions = {}) {
       : new ProfileRuntimeManager({ registry: options.registry, runtime: options.runtime }));
   const logBuffers = options.runtime?.logBuffers ?? options.logBuffers;
   const now = options.now ?? Date.now;
-  const app = fastify({ logger: false, bodyLimit: 65_536, trustProxy: false });
+  const app = fastify({
+    logger: false,
+    bodyLimit: 65_536,
+    trustProxy: false,
+    forceCloseConnections: true,
+  });
   const pairingCode = randomToken(16);
   const pairingExpiresAt = now() + PAIRING_TTL_MS;
   let failedPairingAttempts = 0;

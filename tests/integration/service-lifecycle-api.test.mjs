@@ -398,6 +398,26 @@ test("authenticated service lifecycle API starts, streams, inspects, and stops a
       ).status,
       200,
     );
+    await registry.registerProject(projectPath);
+    const shutdownStart = await call(
+      origin,
+      `/api/services/${service.id}/start`,
+      mutation(origin, cookie, csrfToken, {}),
+    );
+    assert.equal(shutdownStart.status, 202);
+    await waitForStatus(
+      origin,
+      service.id,
+      cookie,
+      (status) => status.snapshot?.readinessState === "ready",
+    );
+    assert.equal((await fetch(serviceUrl)).status, 200);
+
+    await api.close();
+    api = undefined;
+
+    await waitForEndpointToClose(serviceUrl);
+    assert.equal(store.listRuns(service.id).at(-1).processState, "stopped");
   } finally {
     await reader?.cancel();
     await api?.close();

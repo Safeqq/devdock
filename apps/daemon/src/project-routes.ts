@@ -130,6 +130,7 @@ export function registerProjectRoutes(
       ...(parsed.data.displayName === undefined ? {} : { displayName: parsed.data.displayName }),
       ...(parsed.data.expectedPort === undefined ? {} : { expectedPort: parsed.data.expectedPort }),
       ...(parsed.data.readiness === undefined ? {} : { readiness: parsed.data.readiness }),
+      restartPolicy: parsed.data.restartPolicy,
       envFiles: parsed.data.envFiles,
       requiredEnvKeys: parsed.data.requiredEnvKeys,
     });

@@ -26,6 +26,35 @@ test("a readiness probe requires an expected port", () => {
   assert.equal(configured.success, true);
   assert.deepEqual(configured.data.envFiles, []);
   assert.deepEqual(configured.data.requiredEnvKeys, []);
+  assert.deepEqual(configured.data.restartPolicy, { kind: "off" });
+});
+
+test("restart policy is opt-in and bounded", () => {
+  const configured = SelectServiceRequestSchema.parse({
+    scriptName: "dev",
+    restartPolicy: {
+      kind: "on_failure",
+      maxAttempts: 3,
+      initialBackoffMs: 100,
+      maxBackoffMs: 1_000,
+    },
+  });
+  assert.equal(configured.restartPolicy.kind, "on_failure");
+  assert.deepEqual(SelectServiceRequestSchema.parse({ scriptName: "dev" }).restartPolicy, {
+    kind: "off",
+  });
+  assert.equal(
+    SelectServiceRequestSchema.safeParse({
+      scriptName: "dev",
+      restartPolicy: {
+        kind: "on_failure",
+        maxAttempts: 11,
+        initialBackoffMs: 1_000,
+        maxBackoffMs: 100,
+      },
+    }).success,
+    false,
+  );
 });
 
 test("environment diagnostics configuration only accepts bounded portable names", () => {

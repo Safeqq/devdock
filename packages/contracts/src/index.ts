@@ -91,6 +91,22 @@ export const ReadinessProbeSchema = z.discriminatedUnion("kind", [
 ]);
 export type ReadinessProbe = z.infer<typeof ReadinessProbeSchema>;
 
+export const RestartPolicySchema = z
+  .discriminatedUnion("kind", [
+    z.strictObject({ kind: z.literal("off") }),
+    z.strictObject({
+      kind: z.literal("on_failure"),
+      maxAttempts: z.number().int().min(1).max(10),
+      initialBackoffMs: z.number().int().min(100).max(60_000),
+      maxBackoffMs: z.number().int().min(100).max(300_000),
+    }),
+  ])
+  .refine((policy) => policy.kind === "off" || policy.maxBackoffMs >= policy.initialBackoffMs, {
+    message: "Maximum restart backoff must be at least the initial backoff",
+    path: ["maxBackoffMs"],
+  });
+export type RestartPolicy = z.infer<typeof RestartPolicySchema>;
+
 export const ServiceConfigSchema = z
   .strictObject({
     id: identifier,
@@ -103,6 +119,7 @@ export const ServiceConfigSchema = z
     }),
     expectedPort: z.number().int().min(1).max(65_535).optional(),
     readiness: ReadinessProbeSchema.optional(),
+    restartPolicy: RestartPolicySchema.default({ kind: "off" }),
     envFiles: EnvironmentFileReferencesSchema.default([]),
     requiredEnvKeys: RequiredEnvironmentKeysSchema.default([]),
   })
@@ -238,6 +255,7 @@ export const SelectServiceRequestSchema = z
     displayName: z.string().trim().min(1).max(128).optional(),
     expectedPort: z.number().int().min(1).max(65_535).optional(),
     readiness: ReadinessProbeSchema.optional(),
+    restartPolicy: RestartPolicySchema.default({ kind: "off" }),
     envFiles: EnvironmentFileReferencesSchema.default([]),
     requiredEnvKeys: RequiredEnvironmentKeysSchema.default([]),
   })

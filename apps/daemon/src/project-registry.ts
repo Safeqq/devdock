@@ -7,6 +7,7 @@ import {
   type ProfileService,
   type ProjectRecord,
   type ReadinessProbe,
+  type RestartPolicy,
   type RunSnapshot,
   type ScriptDiscovery,
   ScriptDiscoverySchema,
@@ -234,6 +235,7 @@ export class ProjectRegistry {
       displayName?: string;
       expectedPort?: number;
       readiness?: ReadinessProbe;
+      restartPolicy?: RestartPolicy;
       envFiles?: readonly string[];
       requiredEnvKeys?: readonly string[];
     } = {},
@@ -267,6 +269,7 @@ export class ProjectRegistry {
       cwd: discovery.cwd,
       ...(options.expectedPort === undefined ? {} : { expectedPort: options.expectedPort }),
       ...(options.readiness === undefined ? {} : { readiness: options.readiness }),
+      ...(options.restartPolicy === undefined ? {} : { restartPolicy: options.restartPolicy }),
       envFiles,
       requiredEnvKeys: options.requiredEnvKeys ?? [],
     });

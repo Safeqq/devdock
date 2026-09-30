@@ -4,6 +4,7 @@ import {
   type ProfileOperationSnapshot,
   ProfileOperationSnapshotSchema,
   type ProfileServiceOperation,
+  type RunSnapshot,
 } from "@devdock/contracts";
 import { profileStartOrder } from "./profile-graph.js";
 import type { ProjectRegistry } from "./project-registry.js";
@@ -23,6 +24,7 @@ interface ProfileServiceRuntime {
     runId: string,
     signal?: AbortSignal,
   ): Promise<ServiceStartupResult>;
+  subscribe(serviceId: string, listener: (snapshot: RunSnapshot) => void): () => void;
 }
 
 interface ServiceLease {
@@ -37,6 +39,7 @@ interface ActiveProfileOperation {
   readonly controller: AbortController;
   snapshot: ProfileOperationSnapshot;
   stopRequested: boolean;
+  readonly unsubscribe: Array<() => void>;
 }
 
 export type ProfileStartOutcome =
@@ -92,7 +95,7 @@ export class ProfileRuntimeManager {
     if (this.#closed) throw new Error("Profile runtime manager is closed");
     const profile = await this.#registry.runnableProfile(profileId);
     const existing = this.#operations.get(profileId);
-    if (existing !== undefined && active(existing.snapshot)) {
+    if (existing !== undefined && (active(existing.snapshot) || this.#hasLease(existing))) {
       return { kind: "existing", snapshot: clone(existing.snapshot) };
     }
     const order = profileStartOrder(profile);
@@ -101,6 +104,7 @@ export class ProfileRuntimeManager {
       order,
       controller: new AbortController(),
       stopRequested: false,
+      unsubscribe: [],
       snapshot: ProfileOperationSnapshotSchema.parse({
         operationId: randomUUID(),
         profileId,
@@ -114,7 +118,7 @@ export class ProfileRuntimeManager {
       }),
     };
     const raced = this.#operations.get(profileId);
-    if (raced !== undefined && active(raced.snapshot)) {
+    if (raced !== undefined && (active(raced.snapshot) || this.#hasLease(raced))) {
       return { kind: "existing", snapshot: clone(raced.snapshot) };
     }
     this.#operations.set(profileId, operation);
@@ -133,7 +137,7 @@ export class ProfileRuntimeManager {
   async stop(profileId: string): Promise<ProfileStopOutcome> {
     this.#registry.getProfile(profileId);
     const operation = this.#operations.get(profileId);
-    if (operation === undefined || !active(operation.snapshot)) {
+    if (operation === undefined || (!active(operation.snapshot) && !this.#hasLease(operation))) {
       return {
         kind: "already_stopped",
         snapshot: operation === undefined ? null : clone(operation.snapshot),
@@ -151,7 +155,10 @@ export class ProfileRuntimeManager {
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
-    for (const operation of this.#operations.values()) operation.controller.abort();
+    for (const operation of this.#operations.values()) {
+      operation.controller.abort();
+      this.#clearSubscriptions(operation);
+    }
     await this.#tail;
     this.#leases.clear();
   }
@@ -186,6 +193,7 @@ export class ProfileRuntimeManager {
       }
       const origin = outcome.kind === "started" ? "started" : "pre_existing";
       this.#acquire(operation, serviceId, outcome.snapshot.runId, origin === "started");
+      this.#observe(operation, serviceId, outcome.snapshot.runId);
       this.#updateService(operation, serviceId, {
         origin,
         state: "starting",
@@ -217,6 +225,7 @@ export class ProfileRuntimeManager {
 
     if (failureReason === null) {
       this.#set(operation, { ...operation.snapshot, state: "ready" });
+      await this.#verifyReadyRuns(operation);
       return;
     }
     await this.#rollback(operation);
@@ -234,6 +243,7 @@ export class ProfileRuntimeManager {
   }
 
   async #rollback(operation: ActiveProfileOperation): Promise<void> {
+    this.#clearSubscriptions(operation);
     for (const serviceId of [...operation.order].reverse()) {
       const service = operation.snapshot.services.find((entry) => entry.serviceId === serviceId);
       if (service?.runId === undefined) continue;
@@ -243,6 +253,7 @@ export class ProfileRuntimeManager {
 
   async #stopOperation(operation: ActiveProfileOperation): Promise<void> {
     if (operation.snapshot.state === "stopped") return;
+    this.#clearSubscriptions(operation);
     for (const serviceId of [...operation.order].reverse()) {
       const service = operation.snapshot.services.find((entry) => entry.serviceId === serviceId);
       if (service?.runId === undefined) continue;
@@ -336,7 +347,74 @@ export class ProfileRuntimeManager {
     }
   }
 
+  #observe(operation: ActiveProfileOperation, serviceId: string, runId: string): void {
+    const unsubscribe = this.#runtime.subscribe(serviceId, (snapshot) => {
+      this.#observeSnapshot(operation, serviceId, runId, snapshot);
+    });
+    operation.unsubscribe.push(unsubscribe);
+  }
+
+  #observeSnapshot(
+    operation: ActiveProfileOperation,
+    serviceId: string,
+    runId: string,
+    snapshot: RunSnapshot | null,
+  ): void {
+    if (
+      this.#operations.get(operation.profile.id) !== operation ||
+      operation.snapshot.state !== "ready" ||
+      operation.stopRequested
+    ) {
+      return;
+    }
+    const unavailable =
+      snapshot === null ||
+      snapshot.runId !== runId ||
+      snapshot.reconciliationState === "unknown" ||
+      snapshot.readinessState === "unhealthy" ||
+      snapshot.processState === "stopped" ||
+      snapshot.processState === "exited" ||
+      snapshot.processState === "failed";
+    if (!unavailable) return;
+    const reason =
+      snapshot === null || snapshot.runId !== runId
+        ? "DEPENDENCY_RUN_CHANGED"
+        : (snapshot.failureReason ?? "DEPENDENCY_EXITED");
+    this.#clearSubscriptions(operation);
+    this.#updateService(operation, serviceId, { state: "failed", reason });
+    this.#set(operation, {
+      ...operation.snapshot,
+      state: "degraded",
+      endedAt: new Date().toISOString(),
+      failureReason: reason,
+    });
+  }
+
+  async #verifyReadyRuns(operation: ActiveProfileOperation): Promise<void> {
+    for (const service of operation.snapshot.services) {
+      if (operation.snapshot.state !== "ready" || service.runId === undefined) return;
+      try {
+        const inspection = await this.#runtime.status(service.serviceId);
+        this.#observeSnapshot(operation, service.serviceId, service.runId, inspection.snapshot);
+      } catch {
+        this.#observeSnapshot(operation, service.serviceId, service.runId, null);
+      }
+    }
+  }
+
+  #hasLease(operation: ActiveProfileOperation): boolean {
+    for (const lease of this.#leases.values()) {
+      if (lease.consumers.has(operation.snapshot.operationId)) return true;
+    }
+    return false;
+  }
+
+  #clearSubscriptions(operation: ActiveProfileOperation): void {
+    for (const unsubscribe of operation.unsubscribe.splice(0)) unsubscribe();
+  }
+
   #finishFailure(operation: ActiveProfileOperation, reason: string): void {
+    this.#clearSubscriptions(operation);
     this.#set(operation, {
       ...operation.snapshot,
       state: "degraded",

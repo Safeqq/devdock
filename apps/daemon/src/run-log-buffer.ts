@@ -77,6 +77,7 @@ export class RunLogBuffer {
   #sequence = 0;
   #capturing = false;
   readonly #listeners = new Set<(event: LogEvent) => void>();
+  readonly #streamCleanups = new Map<LogStream, () => void>();
 
   constructor(daemonSessionId: string, runId: string, options: LogBufferOptions = {}) {
     this.daemonSessionId = daemonSessionId;
@@ -120,12 +121,33 @@ export class RunLogBuffer {
   }
 
   #captureStream(stream: LogStream, source: Readable): void {
-    source.on("data", (chunk: Buffer | string) => {
+    const onData = (chunk: Buffer | string) => {
       this.push(stream, chunk);
-    });
-    source.once("end", () => this.end(stream));
-    source.once("error", () => this.end(stream));
-    source.once("close", () => this.end(stream));
+    };
+    const finish = () => {
+      cleanup();
+      this.end(stream);
+    };
+    const cleanup = () => {
+      source.off("data", onData);
+      source.off("end", finish);
+      source.off("error", finish);
+      source.off("close", finish);
+      if (this.#streamCleanups.get(stream) === cleanup) this.#streamCleanups.delete(stream);
+    };
+    this.#streamCleanups.set(stream, cleanup);
+    source.on("data", onData);
+    source.once("end", finish);
+    source.once("error", finish);
+    source.once("close", finish);
+  }
+
+  dispose(): void {
+    for (const cleanup of this.#streamCleanups.values()) cleanup();
+    this.#streamCleanups.clear();
+    this.end("stdout");
+    this.end("stderr");
+    this.#listeners.clear();
   }
 
   push(stream: LogStream, chunk: Buffer | string): void {

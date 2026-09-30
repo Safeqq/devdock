@@ -206,6 +206,7 @@ test("authenticated SSE replays retained logs, signals gaps, and follows live ou
   const api = createLocalApiServer({ logBuffers: new Map([[runId, logs]]) });
   const origin = await api.listen(0);
   let reader;
+  let streamController;
   try {
     const path = `/api/events?runId=${runId}`;
     assert.equal((await request(origin, path)).status, 401);
@@ -222,9 +223,10 @@ test("authenticated SSE replays retained logs, signals gaps, and follows live ou
       400,
     );
 
+    streamController = new AbortController();
     const response = await fetch(`${origin}${path}`, {
       headers: { cookie, "last-event-id": "0" },
-      signal: AbortSignal.timeout(5_000),
+      signal: streamController.signal,
     });
     assert.equal(response.status, 200);
     reader = response.body.getReader();
@@ -245,9 +247,31 @@ test("authenticated SSE replays retained logs, signals gaps, and follows live ou
     assert.equal(live.id, 4);
     assert.equal(live.data.stream, "stderr");
     assert.equal(live.data.text, "live");
-    await reader.cancel();
+    streamController.abort();
+    await reader.cancel().catch(() => undefined);
+    reader = undefined;
+
+    logs.push("stdout", "after-reconnect-one\nafter-reconnect-two\n");
+    streamController = new AbortController();
+    const reconnected = await fetch(`${origin}${path}`, {
+      headers: { cookie, "last-event-id": "4" },
+      signal: streamController.signal,
+    });
+    assert.equal(reconnected.status, 200);
+    reader = reconnected.body.getReader();
+    const reconnectState = { text: "", decoder: new TextDecoder() };
+    const fifth = await nextSseFrame(reader, reconnectState);
+    const sixth = await nextSseFrame(reader, reconnectState);
+    assert.deepEqual([fifth.id, sixth.id], [5, 6]);
+    assert.deepEqual(
+      [fifth.data.text, sixth.data.text],
+      ["after-reconnect-one", "after-reconnect-two"],
+    );
+    streamController.abort();
+    await reader.cancel().catch(() => undefined);
     reader = undefined;
   } finally {
+    streamController?.abort();
     await reader?.cancel();
     await api.close();
   }

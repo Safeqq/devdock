@@ -32,11 +32,28 @@ function fakeRegistry(profiles) {
 function fakeRuntime({ preExisting = [], fail = [] } = {}) {
   const running = new Map(preExisting.map((serviceId) => [serviceId, randomUUID()]));
   const failed = new Set(fail);
+  const listeners = new Map();
   const starts = [];
   const stops = [];
   return {
     starts,
     stops,
+    subscribe(serviceId, listener) {
+      const serviceListeners = listeners.get(serviceId) ?? new Set();
+      serviceListeners.add(listener);
+      listeners.set(serviceId, serviceListeners);
+      return () => serviceListeners.delete(listener);
+    },
+    crash(serviceId) {
+      const runId = running.get(serviceId);
+      assert.ok(runId);
+      running.delete(serviceId);
+      const snapshot = {
+        ...runSnapshot(serviceId, runId, "failed"),
+        failureReason: "PROCESS_EXITED_WITH_FAILURE",
+      };
+      for (const listener of listeners.get(serviceId) ?? []) listener(snapshot);
+    },
     async start(serviceId) {
       starts.push(serviceId);
       const current = running.get(serviceId);
@@ -169,6 +186,50 @@ test("shared profile lease stops a managed service only after the final consumer
   }
 });
 
+test("a dependency crash degrades a ready profile without stopping its dependents", async () => {
+  const projectId = randomUUID();
+  const dependency = randomUUID();
+  const dependent = randomUUID();
+  const profile = {
+    id: randomUUID(),
+    projectId,
+    displayName: "Crash-aware profile",
+    services: [
+      { serviceId: dependency, dependsOn: [] },
+      { serviceId: dependent, dependsOn: [dependency] },
+    ],
+  };
+  const runtime = fakeRuntime();
+  const manager = new ProfileRuntimeManager({
+    registry: fakeRegistry([profile]),
+    runtime,
+  });
+  try {
+    await manager.start(profile.id);
+    await waitForState(manager, profile.id, "ready");
+
+    runtime.crash(dependency);
+
+    const degraded = await waitForState(manager, profile.id, "degraded");
+    assert.equal(degraded.failureReason, "PROCESS_EXITED_WITH_FAILURE");
+    assert.equal(
+      degraded.services.find((service) => service.serviceId === dependency).state,
+      "failed",
+    );
+    assert.equal(
+      degraded.services.find((service) => service.serviceId === dependent).state,
+      "ready",
+    );
+    assert.deepEqual(runtime.stops, []);
+
+    const stopped = await manager.stop(profile.id);
+    assert.equal(stopped.kind, "stopped");
+    assert.deepEqual(runtime.stops, [dependent]);
+  } finally {
+    await manager.close();
+  }
+});
+
 test("Stop cancels an in-flight profile startup and rolls back its owned run", async () => {
   const projectId = randomUUID();
   const serviceId = randomUUID();
@@ -183,6 +244,9 @@ test("Stop cancels an in-flight profile startup and rolls back its owned run", a
   let running = true;
   let stopCount = 0;
   const runtime = {
+    subscribe() {
+      return () => {};
+    },
     async start() {
       return { kind: "started", snapshot: runSnapshot(serviceId, runId) };
     },

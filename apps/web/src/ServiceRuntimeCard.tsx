@@ -248,6 +248,9 @@ export function ServiceRuntimeCard({
             {service.readiness
               ? ` · ${service.readiness.kind.toUpperCase()} readiness (${service.readiness.timeoutMs} ms)`
               : ""}
+            {service.restartPolicy.kind === "on_failure"
+              ? ` · restart up to ${service.restartPolicy.maxAttempts} times`
+              : ""}
           </p>
         </div>
         <span className={`status-chip state-${snapshot?.processState ?? "stopped"}`}>

@@ -34,4 +34,16 @@ export const migrations = [
       ) STRICT;
     `,
   },
+  {
+    version: 2,
+    sql: `
+      CREATE TABLE profiles (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+        config_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX profiles_project_id_idx ON profiles(project_id, created_at, id);
+    `,
+  },
 ] as const;

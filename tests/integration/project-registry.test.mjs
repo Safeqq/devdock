@@ -9,6 +9,7 @@ import { test } from "node:test";
 import { ProjectRegistry } from "../../apps/daemon/dist/project-registry.js";
 import { NpmLauncher } from "../../packages/platform/dist/index.js";
 import { RegistryDatabase } from "../../packages/storage/dist/index.js";
+import { migrations } from "../../packages/storage/dist/migrations.js";
 
 async function runPlan(plan) {
   const child = spawn(plan.executable, [...plan.args], {
@@ -58,11 +59,12 @@ test("project registry persists selections without running scripts during discov
     );
     await writeFile(
       join(projectPath, "marker.mjs"),
-      "import { writeFileSync } from 'node:fs'; writeFileSync(new URL('./marker.out', import.meta.url), 'executed');",
+      "import { writeFileSync } from 'node:fs'; writeFileSync(new URL('./marker.out', import.meta.url), process.env.PROJECT_TOKEN ?? 'missing');",
     );
+    await writeFile(join(projectPath, ".env.test"), "PROJECT_TOKEN=loaded-from-env-file\n");
 
     store = await RegistryDatabase.open(dbPath);
-    assert.equal(store.schemaVersion(), 1);
+    assert.equal(store.schemaVersion(), 2);
     const registry = new ProjectRegistry(store);
     const project = await registry.registerProject(projectPath);
     const duplicate = await registry.registerProject(join(projectPath, "."));
@@ -73,7 +75,27 @@ test("project registry persists selections without running scripts during discov
     assert.deepEqual(discovered.scriptNames, ["mark:ready"]);
     assert.equal(discovered.unsupportedScriptCount, 0);
     assert.equal(discovered.packageName, "phase2-fixture");
-    const service = await registry.selectService(project.id, "mark:ready");
+    const service = await registry.selectService(project.id, "mark:ready", {
+      envFiles: [".env.test"],
+      requiredEnvKeys: ["PROJECT_TOKEN"],
+    });
+    const secondary = await registry.selectService(project.id, "mark:ready", {
+      displayName: "Secondary",
+    });
+    const backendProfile = await registry.createProfile(project.id, "Backend Only", [
+      { serviceId: service.id, dependsOn: [] },
+    ]);
+    await assert.rejects(
+      registry.createProfile(project.id, "Cycle", [
+        { serviceId: service.id, dependsOn: [secondary.id] },
+        { serviceId: secondary.id, dependsOn: [service.id] },
+      ]),
+      (caught) => {
+        assert.equal(caught.code, "PROFILE_CYCLE");
+        assert.match(caught.message, /mark:ready -> Secondary -> mark:ready/u);
+        return true;
+      },
+    );
     await assert.rejects(access(markerPath));
     await assert.rejects(registry.selectService(project.id, "missing"), {
       code: "SCRIPT_NOT_FOUND",
@@ -81,6 +103,10 @@ test("project registry persists selections without running scripts during discov
     await assert.rejects(registry.discoverScripts(project.id, "../outside"), {
       code: "CWD_OUTSIDE_PROJECT",
     });
+    await assert.rejects(
+      registry.selectService(project.id, "mark:ready", { envFiles: ["../outside.env"] }),
+      { code: "SERVICE_CONFIG_INVALID" },
+    );
 
     const launcher = await NpmLauncher.locate();
     const plan = await registry.launchPlan(service.id, launcher);
@@ -88,6 +114,7 @@ test("project registry persists selections without running scripts during discov
     assert.equal(plan.args.at(-2), "run");
     assert.equal(plan.args.at(-1), "mark:ready");
     assert.equal(plan.canonicalCwd, project.path.canonicalPath);
+    assert.equal(plan.env.PROJECT_TOKEN, "loaded-from-env-file");
     assert.equal(
       launcher.plan("mark:ready", plan.canonicalCwd, {
         PATH: process.env.PATH,
@@ -96,7 +123,22 @@ test("project registry persists selections without running scripts during discov
       undefined,
     );
     await runPlan(plan);
-    assert.equal(await readFile(markerPath, "utf8"), "executed");
+    assert.equal(await readFile(markerPath, "utf8"), "loaded-from-env-file");
+
+    const missingEnvironment = await registry.selectService(project.id, "mark:ready", {
+      displayName: "Missing environment",
+      requiredEnvKeys: ["MISSING_PROJECT_TOKEN"],
+    });
+    await assert.rejects(registry.launchPlan(missingEnvironment.id, launcher), {
+      code: "SERVICE_ENV_KEY_MISSING",
+    });
+    const missingFile = await registry.selectService(project.id, "mark:ready", {
+      displayName: "Missing environment file",
+      envFiles: [".env.missing"],
+    });
+    await assert.rejects(registry.launchPlan(missingFile.id, launcher), {
+      code: "SERVICE_ENV_FILE_UNAVAILABLE",
+    });
 
     const runId = randomUUID();
     const startedAt = new Date().toISOString();
@@ -123,9 +165,13 @@ test("project registry persists selections without running scripts during discov
     );
     store.close();
     store = await RegistryDatabase.open(dbPath);
-    assert.equal(store.schemaVersion(), 1);
+    assert.equal(store.schemaVersion(), 2);
     assert.equal(store.getProject(project.id).archivedAt, archived.archivedAt);
     assert.equal(store.getService(service.id).scriptName, "mark:ready");
+    assert.deepEqual(store.getService(service.id).envFiles, [".env.test"]);
+    assert.deepEqual(store.getService(service.id).requiredEnvKeys, ["PROJECT_TOKEN"]);
+    assert.deepEqual(store.getProfile(backendProfile.id), backendProfile);
+    assert.deepEqual(store.listProfiles(project.id), [backendProfile]);
     assert.equal(store.listRuns(service.id)[0].runId, runId);
     assert.deepEqual(store.getSettings(), { theme: "dark", logLineLimit: 1_000 });
     const restored = await new ProjectRegistry(store).registerProject(projectPath);
@@ -170,6 +216,25 @@ test("newer SQLite schema is rejected before migrations run", async () => {
     assert.equal(unchanged.prepare("PRAGMA user_version").get().user_version, 99);
     unchanged.close();
   } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("schema version 1 migrates to profile storage without replacing existing tables", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "devdock-schema-profile-"));
+  const dbPath = join(tempRoot, "legacy.sqlite");
+  let store;
+  try {
+    const legacy = new DatabaseSync(dbPath);
+    legacy.exec(migrations[0].sql);
+    legacy.exec("PRAGMA user_version = 1");
+    legacy.close();
+
+    store = await RegistryDatabase.open(dbPath);
+    assert.equal(store.schemaVersion(), 2);
+    assert.deepEqual(store.listProjects(), []);
+  } finally {
+    store?.close();
     await rm(tempRoot, { recursive: true, force: true });
   }
 });

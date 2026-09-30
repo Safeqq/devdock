@@ -5,6 +5,8 @@ import { DatabaseSync } from "node:sqlite";
 import {
   type AppSettings,
   AppSettingsSchema,
+  type ProfileConfig,
+  ProfileConfigSchema,
   type ProjectRecord,
   ProjectRecordSchema,
   type RunSnapshot,
@@ -293,6 +295,43 @@ export class RegistryDatabase {
         return ServiceConfigSchema.parse(readJson(row.config_json, "service"));
       } catch {
         throw new RegistryStorageError("DATA_INVALID", "Stored service is invalid");
+      }
+    });
+  }
+
+  insertProfile(config: ProfileConfig): ProfileConfig {
+    const validated = ProfileConfigSchema.parse(config);
+    run(
+      this.#db,
+      "INSERT INTO profiles (id, project_id, config_json, created_at) VALUES (?, ?, ?, ?)",
+      validated.id,
+      validated.projectId,
+      JSON.stringify(validated),
+      new Date().toISOString(),
+    );
+    return validated;
+  }
+
+  getProfile(id: string): ProfileConfig | null {
+    const row = one(this.#db, "SELECT config_json FROM profiles WHERE id = ?", id);
+    if (row === undefined) return null;
+    try {
+      return ProfileConfigSchema.parse(readJson(row.config_json, "profile"));
+    } catch {
+      throw new RegistryStorageError("DATA_INVALID", "Stored profile is invalid");
+    }
+  }
+
+  listProfiles(projectId: string): ProfileConfig[] {
+    return all(
+      this.#db,
+      "SELECT config_json FROM profiles WHERE project_id = ? ORDER BY created_at, id",
+      projectId,
+    ).map((row) => {
+      try {
+        return ProfileConfigSchema.parse(readJson(row.config_json, "profile"));
+      } catch {
+        throw new RegistryStorageError("DATA_INVALID", "Stored profile is invalid");
       }
     });
   }

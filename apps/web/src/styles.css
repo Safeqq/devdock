@@ -16,7 +16,8 @@ body {
 }
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 button,
@@ -229,7 +230,8 @@ p {
   font-weight: 700;
 }
 input,
-select {
+select,
+textarea {
   width: 100%;
   min-height: 2.65rem;
   padding: 0.65rem 0.75rem;
@@ -240,6 +242,17 @@ select {
 }
 input::placeholder {
   color: #748a9e;
+}
+textarea {
+  resize: vertical;
+}
+textarea::placeholder {
+  color: #748a9e;
+}
+.field-help {
+  color: #8299ad;
+  font-size: 0.72rem;
+  line-height: 1.45;
 }
 select {
   color-scheme: dark;
@@ -301,6 +314,111 @@ button.danger {
   display: grid;
   gap: 0.9rem;
 }
+.profile-form {
+  margin-bottom: 1.25rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid #2b4359;
+}
+.profile-form fieldset {
+  margin: 0;
+  padding: 0.8rem;
+  border: 1px solid #32495e;
+  border-radius: 0.65rem;
+}
+.profile-form legend {
+  padding: 0 0.35rem;
+  color: #ccdae8;
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+.profile-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+  padding: 0.5rem 0.6rem;
+  border-radius: 0.45rem;
+  background: #0b1c2b;
+}
+.checkbox-row input {
+  width: 1rem;
+  min-height: 1rem;
+  margin: 0;
+}
+.checkbox-row span {
+  overflow-wrap: anywhere;
+}
+.profile-list {
+  display: grid;
+  gap: 0.9rem;
+}
+.profile-card {
+  padding: 1rem;
+  border: 1px solid #32495e;
+  border-radius: 0.8rem;
+  background: #102235;
+}
+.profile-card-heading,
+.action-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.state-pill {
+  border: 1px solid #3c576c;
+  border-radius: 999px;
+  padding: 0.32rem 0.6rem;
+  color: #aebfce;
+  background: #13283a;
+  font-size: 0.67rem;
+  font-weight: 800;
+}
+.state-pill.ready {
+  color: #b9f5d1;
+  border-color: #3a7d61;
+  background: #153b31;
+}
+.state-pill.starting,
+.state-pill.stopping {
+  color: #ffe2a8;
+  border-color: #826a3d;
+  background: #40351f;
+}
+.state-pill.degraded {
+  color: #ffd1ca;
+  border-color: #925861;
+  background: #45262c;
+}
+.profile-service-status {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0.8rem 0 1rem;
+  padding: 0;
+  list-style: none;
+}
+.profile-service-status li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 0.5rem;
+  background: #0b1c2b;
+  font-size: 0.75rem;
+}
+.profile-service-status span {
+  color: #9cb0c3;
+  text-align: right;
+}
+.action-row {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
 .service-card {
   padding: 1rem;
   border: 1px solid #32495e;
@@ -337,10 +455,103 @@ button.danger {
   font-size: 0.75rem;
   line-height: 1.55;
 }
+.diagnostics-view {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid #2f4a5f;
+  border-radius: 0.7rem;
+  background: #0b1c2b;
+}
+.diagnostics-view h4 {
+  margin-bottom: 0;
+}
+.diagnostic-state {
+  border: 1px solid #3c576c;
+  border-radius: 999px;
+  padding: 0.3rem 0.55rem;
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.diagnostic-state.pass,
+.diagnostic-pass {
+  color: #b9f5d1;
+}
+.diagnostic-state.pass {
+  border-color: #3a7d61;
+  background: #153b31;
+}
+.diagnostic-state.attention,
+.diagnostic-attention {
+  color: #ffe2a8;
+}
+.diagnostic-state.attention {
+  border-color: #826a3d;
+  background: #40351f;
+}
+.diagnostic-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+  margin: 1rem 0;
+}
+.diagnostic-facts div {
+  padding: 0.65rem;
+  border: 1px solid #2e465b;
+  border-radius: 0.55rem;
+  background: #071522;
+}
+.diagnostic-facts dt {
+  color: #86a2b8;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.diagnostic-facts dd {
+  margin: 0.25rem 0 0;
+  color: #dceaf3;
+  font-size: 0.76rem;
+}
+.diagnostic-list {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.diagnostic-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #293f53;
+  border-radius: 0.45rem;
+  color: #adc0ce;
+  background: #071522;
+  font-size: 0.73rem;
+}
+.diagnostic-list code {
+  overflow-wrap: anywhere;
+  color: #dceaf3;
+}
+.diagnostic-empty {
+  margin: 0.6rem 0 0;
+  font-size: 0.76rem;
+}
+.diagnostic-note {
+  margin: 0.8rem 0 0;
+  color: #8299ad;
+  font-size: 0.7rem;
+}
 .message {
   padding: 0.8rem 1rem;
   border-radius: 0.55rem;
   line-height: 1.5;
+}
+.profile-card .message {
+  margin: 0 0 1rem;
 }
 .error {
   color: #ffd1ca;
@@ -520,8 +731,19 @@ button.danger {
   .runtime-facts {
     grid-template-columns: 1fr 1fr;
   }
+  .diagnostic-facts {
+    grid-template-columns: 1fr;
+  }
+  .profile-choice-grid {
+    grid-template-columns: 1fr;
+  }
   .project-header,
-  .service-title {
+  .service-title,
+  .profile-card-heading,
+  .profile-service-status li {
     flex-direction: column;
+  }
+  .profile-service-status span {
+    text-align: left;
   }
 }

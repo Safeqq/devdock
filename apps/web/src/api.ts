@@ -1,12 +1,19 @@
-import type { ProjectRecord, ScriptDiscovery, ServiceConfig } from "@devdock/contracts";
+import type {
+  ProfileConfig,
+  ProjectRecord,
+  ScriptDiscovery,
+  ServiceConfig,
+} from "@devdock/contracts";
 
 export type Project = ProjectRecord;
 export type Service = ServiceConfig;
+export type Profile = ProfileConfig;
 export type Discovery = ScriptDiscovery;
 
 export interface ProjectDetail {
   project: Project;
   services: Service[];
+  profiles: Profile[];
 }
 
 export interface CommandPreview {

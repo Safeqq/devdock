@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 
-import { RunSnapshotSchema, ServiceConfigSchema } from "@devdock/contracts";
+import {
+  CreateProfileRequestSchema,
+  RunSnapshotSchema,
+  SelectServiceRequestSchema,
+  ServiceConfigSchema,
+} from "@devdock/contracts";
 
 const service = {
   id: "api",
@@ -19,6 +25,65 @@ test("a readiness probe requires an expected port", () => {
   const configured = ServiceConfigSchema.safeParse({ ...service, expectedPort: 4300 });
   assert.equal(configured.success, true);
   assert.deepEqual(configured.data.envFiles, []);
+  assert.deepEqual(configured.data.requiredEnvKeys, []);
+});
+
+test("environment diagnostics configuration only accepts bounded portable names", () => {
+  const configured = SelectServiceRequestSchema.parse({
+    scriptName: "dev",
+    envFiles: [".env", ".env.local"],
+    requiredEnvKeys: ["DATABASE_URL", "API_TOKEN_2"],
+  });
+  assert.deepEqual(configured.envFiles, [".env", ".env.local"]);
+  assert.deepEqual(configured.requiredEnvKeys, ["DATABASE_URL", "API_TOKEN_2"]);
+  assert.equal(
+    SelectServiceRequestSchema.safeParse({
+      scriptName: "dev",
+      envFiles: [".env", ".env"],
+    }).success,
+    false,
+  );
+  assert.equal(
+    SelectServiceRequestSchema.safeParse({
+      scriptName: "dev",
+      requiredEnvKeys: ["NOT-PORTABLE"],
+    }).success,
+    false,
+  );
+});
+
+test("readiness configuration requires a port and a loopback-safe HTTP path", () => {
+  assert.equal(
+    SelectServiceRequestSchema.safeParse({
+      scriptName: "dev",
+      readiness: { kind: "tcp", timeoutMs: 1_000 },
+    }).success,
+    false,
+  );
+  assert.equal(
+    SelectServiceRequestSchema.safeParse({
+      scriptName: "dev",
+      expectedPort: 4_300,
+      readiness: { kind: "http", path: "//example.invalid/ready", timeoutMs: 1_000 },
+    }).success,
+    false,
+  );
+  assert.equal(
+    SelectServiceRequestSchema.safeParse({
+      scriptName: "dev",
+      expectedPort: 4_300,
+      readiness: { kind: "http", path: "/ready#fragment", timeoutMs: 1_000 },
+    }).success,
+    false,
+  );
+  assert.equal(
+    SelectServiceRequestSchema.safeParse({
+      scriptName: "dev",
+      expectedPort: 4_300,
+      readiness: { kind: "http", path: "/ready", timeoutMs: 1_000 },
+    }).success,
+    true,
+  );
 });
 
 test("unknown readiness and ownership remain distinct from a running process", () => {
@@ -42,4 +107,36 @@ test("service input rejects fields outside its runtime contract", () => {
     command: "arbitrary shell text",
   });
   assert.equal(result.success, false);
+});
+
+test("profile input requires unique members and internal dependency references", () => {
+  const api = randomUUID();
+  const web = randomUUID();
+  assert.equal(
+    CreateProfileRequestSchema.safeParse({
+      displayName: "Full Stack",
+      services: [
+        { serviceId: api, dependsOn: [] },
+        { serviceId: web, dependsOn: [api] },
+      ],
+    }).success,
+    true,
+  );
+  assert.equal(
+    CreateProfileRequestSchema.safeParse({
+      displayName: "Duplicate",
+      services: [
+        { serviceId: api, dependsOn: [] },
+        { serviceId: api, dependsOn: [] },
+      ],
+    }).success,
+    false,
+  );
+  assert.equal(
+    CreateProfileRequestSchema.safeParse({
+      displayName: "Outside dependency",
+      services: [{ serviceId: web, dependsOn: [api] }],
+    }).success,
+    false,
+  );
 });

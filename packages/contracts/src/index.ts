@@ -2,6 +2,54 @@ import { z } from "zod";
 
 const identifier = z.string().min(1).max(128);
 const timeoutMs = z.number().int().positive().max(60_000);
+const httpReadinessPath = z
+  .string()
+  .startsWith("/")
+  .max(2_048)
+  .refine((path) => !path.startsWith("//"), "Readiness paths cannot contain an authority")
+  .refine(
+    (path) =>
+      ![...path].some((character) => {
+        const codePoint = character.codePointAt(0);
+        return codePoint !== undefined && (codePoint < 32 || codePoint === 127);
+      }),
+    "Readiness paths cannot contain control characters",
+  )
+  .refine((path) => !path.includes("#"), "Readiness paths cannot contain fragments");
+
+export const EnvironmentKeyNameSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/u, "Environment key names must be portable identifiers");
+
+export const EnvironmentFileReferenceSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(1_024)
+  .refine(
+    (value) =>
+      [...value].every((character) => {
+        const codePoint = character.codePointAt(0);
+        return codePoint !== undefined && codePoint > 31 && codePoint !== 127;
+      }),
+    "Environment file references cannot contain control characters",
+  );
+
+function uniqueStrings(values: readonly string[]): boolean {
+  return new Set(values).size === values.length;
+}
+
+const EnvironmentFileReferencesSchema = z
+  .array(EnvironmentFileReferenceSchema)
+  .max(8)
+  .refine(uniqueStrings, "Environment file references must be unique");
+
+const RequiredEnvironmentKeysSchema = z
+  .array(EnvironmentKeyNameSchema)
+  .max(64)
+  .refine(uniqueStrings, "Required environment keys must be unique");
 
 export const NpmScriptNameSchema = z
   .string()
@@ -33,6 +81,16 @@ export type ReadinessState = z.infer<typeof ReadinessStateSchema>;
 export const ReconciliationStateSchema = z.enum(["known", "unknown"]);
 export type ReconciliationState = z.infer<typeof ReconciliationStateSchema>;
 
+export const ReadinessProbeSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("tcp"), timeoutMs }),
+  z.strictObject({
+    kind: z.literal("http"),
+    path: httpReadinessPath,
+    timeoutMs,
+  }),
+]);
+export type ReadinessProbe = z.infer<typeof ReadinessProbeSchema>;
+
 export const ServiceConfigSchema = z
   .strictObject({
     id: identifier,
@@ -44,23 +102,58 @@ export const ServiceConfigSchema = z
       canonicalPath: z.string().min(1),
     }),
     expectedPort: z.number().int().min(1).max(65_535).optional(),
-    readiness: z
-      .discriminatedUnion("kind", [
-        z.strictObject({ kind: z.literal("tcp"), timeoutMs }),
-        z.strictObject({
-          kind: z.literal("http"),
-          path: z.string().startsWith("/").max(2_048),
-          timeoutMs,
-        }),
-      ])
-      .optional(),
-    envFiles: z.array(z.string().min(1)).default([]),
+    readiness: ReadinessProbeSchema.optional(),
+    envFiles: EnvironmentFileReferencesSchema.default([]),
+    requiredEnvKeys: RequiredEnvironmentKeysSchema.default([]),
   })
   .refine((service) => service.readiness === undefined || service.expectedPort !== undefined, {
     message: "expectedPort is required when readiness is configured",
     path: ["expectedPort"],
   });
 export type ServiceConfig = z.infer<typeof ServiceConfigSchema>;
+
+export const ProfileServiceSchema = z.strictObject({
+  serviceId: z.uuid(),
+  dependsOn: z.array(z.uuid()).max(32).refine(uniqueStrings, "Profile dependencies must be unique"),
+});
+export type ProfileService = z.infer<typeof ProfileServiceSchema>;
+
+const ProfileServicesSchema = z
+  .array(ProfileServiceSchema)
+  .min(1)
+  .max(32)
+  .refine(
+    (services) => uniqueStrings(services.map((service) => service.serviceId)),
+    "Profile services must be unique",
+  )
+  .superRefine((services, context) => {
+    const members = new Set(services.map((service) => service.serviceId));
+    for (const [index, service] of services.entries()) {
+      for (const dependency of service.dependsOn) {
+        if (dependency === service.serviceId) {
+          context.addIssue({
+            code: "custom",
+            message: "A profile service cannot depend on itself",
+            path: [index, "dependsOn"],
+          });
+        } else if (!members.has(dependency)) {
+          context.addIssue({
+            code: "custom",
+            message: "Profile dependencies must be members of the profile",
+            path: [index, "dependsOn"],
+          });
+        }
+      }
+    }
+  });
+
+export const ProfileConfigSchema = z.strictObject({
+  id: z.uuid(),
+  projectId: z.uuid(),
+  displayName: z.string().trim().min(1).max(128),
+  services: ProfileServicesSchema,
+});
+export type ProfileConfig = z.infer<typeof ProfileConfigSchema>;
 
 export const RunSnapshotSchema = z.strictObject({
   runId: identifier,
@@ -138,11 +231,24 @@ export const RegisterProjectRequestSchema = z.strictObject({
   displayName: z.string().trim().min(1).max(128).optional(),
 });
 
-export const SelectServiceRequestSchema = z.strictObject({
-  scriptName: NpmScriptNameSchema,
-  cwd: z.string().min(1).max(4_096).optional(),
-  displayName: z.string().trim().min(1).max(128).optional(),
-  expectedPort: z.number().int().min(1).max(65_535).optional(),
+export const SelectServiceRequestSchema = z
+  .strictObject({
+    scriptName: NpmScriptNameSchema,
+    cwd: z.string().min(1).max(4_096).optional(),
+    displayName: z.string().trim().min(1).max(128).optional(),
+    expectedPort: z.number().int().min(1).max(65_535).optional(),
+    readiness: ReadinessProbeSchema.optional(),
+    envFiles: EnvironmentFileReferencesSchema.default([]),
+    requiredEnvKeys: RequiredEnvironmentKeysSchema.default([]),
+  })
+  .refine((service) => service.readiness === undefined || service.expectedPort !== undefined, {
+    message: "expectedPort is required when readiness is configured",
+    path: ["expectedPort"],
+  });
+
+export const CreateProfileRequestSchema = z.strictObject({
+  displayName: z.string().trim().min(1).max(128),
+  services: ProfileServicesSchema,
 });
 
 export const SessionResponseSchema = z.strictObject({
@@ -156,9 +262,11 @@ export const ProjectResponseSchema = z.strictObject({ project: ProjectRecordSche
 export const ProjectDetailResponseSchema = z.strictObject({
   project: ProjectRecordSchema,
   services: z.array(ServiceConfigSchema),
+  profiles: z.array(ProfileConfigSchema),
 });
 export const DiscoveryResponseSchema = z.strictObject({ discovery: ScriptDiscoverySchema });
 export const ServiceResponseSchema = z.strictObject({ service: ServiceConfigSchema });
+export const ProfileResponseSchema = z.strictObject({ profile: ProfileConfigSchema });
 export const CommandPreviewResponseSchema = z.strictObject({
   command: z.strictObject({
     executable: z.string().min(1),
@@ -167,6 +275,37 @@ export const CommandPreviewResponseSchema = z.strictObject({
   }),
 });
 export const OpenAppResponseSchema = z.strictObject({ url: z.url() });
+
+export const PortDiagnosticSchema = z.discriminatedUnion("status", [
+  z.strictObject({ status: z.literal("not_configured") }),
+  z.strictObject({
+    status: z.enum(["available", "in_use", "unknown"]),
+    port: z.number().int().min(1).max(65_535),
+  }),
+]);
+export type PortDiagnostic = z.infer<typeof PortDiagnosticSchema>;
+
+export const EnvironmentFileDiagnosticSchema = z.strictObject({
+  path: EnvironmentFileReferenceSchema,
+  status: z.enum(["loaded", "missing", "unreadable", "invalid", "too_large", "outside_cwd"]),
+});
+export type EnvironmentFileDiagnostic = z.infer<typeof EnvironmentFileDiagnosticSchema>;
+
+export const EnvironmentKeyDiagnosticSchema = z.strictObject({
+  name: EnvironmentKeyNameSchema,
+  present: z.boolean(),
+});
+export type EnvironmentKeyDiagnostic = z.infer<typeof EnvironmentKeyDiagnosticSchema>;
+
+export const ServiceDiagnosticsResponseSchema = z.strictObject({
+  port: PortDiagnosticSchema,
+  environment: z.strictObject({
+    files: z.array(EnvironmentFileDiagnosticSchema).max(8),
+    keys: z.array(EnvironmentKeyDiagnosticSchema).max(64),
+    allRequiredKeysPresent: z.boolean(),
+  }),
+});
+export type ServiceDiagnosticsResponse = z.infer<typeof ServiceDiagnosticsResponseSchema>;
 
 export const ServiceActionRequestSchema = z.strictObject({});
 
@@ -206,3 +345,53 @@ const ServiceStopOutcomeSchema = z.discriminatedUnion("kind", [
 ]);
 
 export const ServiceStopResponseSchema = z.strictObject({ outcome: ServiceStopOutcomeSchema });
+
+export const ProfileOperationStateSchema = z.enum([
+  "starting",
+  "ready",
+  "degraded",
+  "stopping",
+  "stopped",
+]);
+export type ProfileOperationState = z.infer<typeof ProfileOperationStateSchema>;
+
+export const ProfileServiceOperationSchema = z.strictObject({
+  serviceId: z.uuid(),
+  origin: z.enum(["pending", "started", "pre_existing"]),
+  state: z.enum(["pending", "starting", "ready", "failed", "rolled_back", "preserved", "stopped"]),
+  runId: z.uuid().optional(),
+  reason: z.string().min(1).max(512).optional(),
+});
+export type ProfileServiceOperation = z.infer<typeof ProfileServiceOperationSchema>;
+
+export const ProfileOperationSnapshotSchema = z.strictObject({
+  operationId: z.uuid(),
+  profileId: z.uuid(),
+  state: ProfileOperationStateSchema,
+  startedAt: z.iso.datetime({ offset: true }),
+  endedAt: z.iso.datetime({ offset: true }).optional(),
+  failureReason: z.string().min(1).max(512).optional(),
+  services: z.array(ProfileServiceOperationSchema).min(1).max(32),
+});
+export type ProfileOperationSnapshot = z.infer<typeof ProfileOperationSnapshotSchema>;
+
+export const ProfileRuntimeStatusResponseSchema = z.strictObject({
+  snapshot: ProfileOperationSnapshotSchema.nullable(),
+});
+
+const ProfileStartOutcomeSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("started"), snapshot: ProfileOperationSnapshotSchema }),
+  z.strictObject({ kind: z.literal("existing"), snapshot: ProfileOperationSnapshotSchema }),
+]);
+
+export const ProfileStartResponseSchema = z.strictObject({ outcome: ProfileStartOutcomeSchema });
+
+const ProfileStopOutcomeSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("stopped"), snapshot: ProfileOperationSnapshotSchema }),
+  z.strictObject({
+    kind: z.literal("already_stopped"),
+    snapshot: ProfileOperationSnapshotSchema.nullable(),
+  }),
+]);
+
+export const ProfileStopResponseSchema = z.strictObject({ outcome: ProfileStopOutcomeSchema });

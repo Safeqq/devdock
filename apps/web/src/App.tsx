@@ -2,6 +2,7 @@ import {
   CommandPreviewResponseSchema,
   DiscoveryResponseSchema,
   OpenAppResponseSchema,
+  ProfileResponseSchema,
   ProjectDetailResponseSchema,
   ProjectListResponseSchema,
   ProjectResponseSchema,
@@ -19,6 +20,7 @@ import {
   type ProjectDetail,
   safeOpenAppUrl,
 } from "./api";
+import { ProfileRuntimeCard } from "./ProfileRuntimeCard";
 import { ServiceRuntimeCard } from "./ServiceRuntimeCard";
 
 type SessionState =
@@ -30,6 +32,13 @@ type SessionState =
 function errorMessage(caught: unknown): string {
   if (caught instanceof ApiError) return `${caught.code}: ${caught.message}`;
   return "Connection failed. Check that DevDock is running, then try again.";
+}
+
+function configurationList(value: string): string[] {
+  return value
+    .split(/[\r\n,]/u)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "");
 }
 
 function PairingView({ onPaired }: { onPaired: (csrfToken: string) => void }) {
@@ -106,6 +115,14 @@ function Dashboard({
   const [scriptName, setScriptName] = useState("");
   const [serviceName, setServiceName] = useState("");
   const [expectedPort, setExpectedPort] = useState("");
+  const [readinessKind, setReadinessKind] = useState<"none" | "tcp" | "http">("none");
+  const [readinessPath, setReadinessPath] = useState("/ready");
+  const [readinessTimeout, setReadinessTimeout] = useState("5000");
+  const [envFiles, setEnvFiles] = useState("");
+  const [requiredEnvKeys, setRequiredEnvKeys] = useState("");
+  const [profileName, setProfileName] = useState("");
+  const [profileMembers, setProfileMembers] = useState<string[]>([]);
+  const [profileDependencies, setProfileDependencies] = useState<Record<string, string[]>>({});
   const [previews, setPreviews] = useState<Record<string, CommandPreview>>({});
   const [openLinks, setOpenLinks] = useState<Record<string, string>>({});
   const [selectedRuntimeServiceId, setSelectedRuntimeServiceId] = useState<string | null>(null);
@@ -159,6 +176,9 @@ function Dashboard({
     setPreviews({});
     setOpenLinks({});
     setSelectedRuntimeServiceId(null);
+    setProfileName("");
+    setProfileMembers([]);
+    setProfileDependencies({});
     if (selectedId === null) return;
     const controller = new AbortController();
     setDetailLoading(true);
@@ -255,6 +275,26 @@ function Dashboard({
       setError("Expected port must be between 1 and 65535.");
       return;
     }
+    if (readinessKind !== "none" && port === undefined) {
+      setError("An expected port is required for readiness checks.");
+      return;
+    }
+    const timeout = Number(readinessTimeout);
+    if (
+      readinessKind !== "none" &&
+      (!Number.isInteger(timeout) || timeout < 1 || timeout > 60_000)
+    ) {
+      setError("Readiness timeout must be between 1 and 60000 milliseconds.");
+      return;
+    }
+    const readiness =
+      readinessKind === "tcp"
+        ? { kind: "tcp" as const, timeoutMs: timeout }
+        : readinessKind === "http"
+          ? { kind: "http" as const, path: readinessPath, timeoutMs: timeout }
+          : undefined;
+    const configuredEnvFiles = configurationList(envFiles);
+    const configuredRequiredEnvKeys = configurationList(requiredEnvKeys);
     setBusy(true);
     setError(null);
     try {
@@ -265,12 +305,20 @@ function Dashboard({
           cwd: discoveredCwd,
           ...(serviceName.trim() ? { displayName: serviceName.trim() } : {}),
           ...(port === undefined ? {} : { expectedPort: port }),
+          ...(readiness === undefined ? {} : { readiness }),
+          envFiles: configuredEnvFiles,
+          requiredEnvKeys: configuredRequiredEnvKeys,
         },
         (value) => ServiceResponseSchema.parse(value),
         csrfToken,
       );
       setServiceName("");
       setExpectedPort("");
+      setReadinessKind("none");
+      setReadinessPath("/ready");
+      setReadinessTimeout("5000");
+      setEnvFiles("");
+      setRequiredEnvKeys("");
       setRefresh((value) => value + 1);
     } catch (caught) {
       handleError(caught);
@@ -288,6 +336,65 @@ function Dashboard({
       setPreviews((current) => ({ ...current, [serviceId]: command }));
     } catch (caught) {
       handleError(caught);
+    }
+  }
+
+  function toggleProfileMember(serviceId: string, selected: boolean) {
+    setProfileMembers((current) =>
+      selected ? [...current, serviceId] : current.filter((id) => id !== serviceId),
+    );
+    if (!selected) {
+      setProfileDependencies((current) =>
+        Object.fromEntries(
+          Object.entries(current)
+            .filter(([id]) => id !== serviceId)
+            .map(([id, dependencies]) => [
+              id,
+              dependencies.filter((dependency) => dependency !== serviceId),
+            ]),
+        ),
+      );
+    }
+  }
+
+  function toggleProfileDependency(serviceId: string, dependencyId: string, selected: boolean) {
+    setProfileDependencies((current) => {
+      const dependencies = current[serviceId] ?? [];
+      return {
+        ...current,
+        [serviceId]: selected
+          ? [...dependencies, dependencyId]
+          : dependencies.filter((id) => id !== dependencyId),
+      };
+    });
+  }
+
+  async function createProfile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (selectedId === null || profileMembers.length === 0) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await apiPost(
+        `/api/projects/${selectedId}/profiles`,
+        {
+          displayName: profileName.trim(),
+          services: profileMembers.map((serviceId) => ({
+            serviceId,
+            dependsOn: profileDependencies[serviceId] ?? [],
+          })),
+        },
+        (value) => ProfileResponseSchema.parse(value),
+        csrfToken,
+      );
+      setProfileName("");
+      setProfileMembers([]);
+      setProfileDependencies({});
+      setRefresh((value) => value + 1);
+    } catch (caught) {
+      handleError(caught);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -477,6 +584,85 @@ function Dashboard({
                       />
                     </div>
                   </div>
+                  <div className="form-row">
+                    <div className="stack">
+                      <label htmlFor="readiness-kind">Readiness probe</label>
+                      <select
+                        id="readiness-kind"
+                        value={readinessKind}
+                        onChange={(event) =>
+                          setReadinessKind(event.target.value as "none" | "tcp" | "http")
+                        }
+                      >
+                        <option value="none">None</option>
+                        <option value="tcp">TCP loopback</option>
+                        <option value="http">HTTP loopback</option>
+                      </select>
+                    </div>
+                    <div className="stack">
+                      <label htmlFor="readiness-timeout">Readiness timeout (ms)</label>
+                      <input
+                        id="readiness-timeout"
+                        type="number"
+                        min="1"
+                        max="60000"
+                        value={readinessTimeout}
+                        onChange={(event) => setReadinessTimeout(event.target.value)}
+                        disabled={readinessKind === "none"}
+                        required={readinessKind !== "none"}
+                      />
+                    </div>
+                  </div>
+                  {readinessKind === "http" ? (
+                    <div className="stack">
+                      <label htmlFor="readiness-path">HTTP readiness path</label>
+                      <input
+                        id="readiness-path"
+                        value={readinessPath}
+                        onChange={(event) => setReadinessPath(event.target.value)}
+                        placeholder="/ready"
+                        required
+                        maxLength={2048}
+                      />
+                      <small className="field-help">
+                        Requests stay on 127.0.0.1. Redirect responses are not followed.
+                      </small>
+                    </div>
+                  ) : null}
+                  <div className="form-row">
+                    <div className="stack">
+                      <label htmlFor="env-files">Environment files (optional)</label>
+                      <textarea
+                        id="env-files"
+                        value={envFiles}
+                        onChange={(event) => setEnvFiles(event.target.value)}
+                        placeholder=".env.local"
+                        rows={3}
+                        maxLength={4096}
+                        aria-describedby="env-files-help"
+                      />
+                      <small id="env-files-help" className="field-help">
+                        Relative to the service directory. One path per line or comma-separated.
+                      </small>
+                    </div>
+                    <div className="stack">
+                      <label htmlFor="required-env-keys">
+                        Required environment keys (optional)
+                      </label>
+                      <textarea
+                        id="required-env-keys"
+                        value={requiredEnvKeys}
+                        onChange={(event) => setRequiredEnvKeys(event.target.value)}
+                        placeholder="DATABASE_URL"
+                        rows={3}
+                        maxLength={4096}
+                        aria-describedby="required-env-keys-help"
+                      />
+                      <small id="required-env-keys-help" className="field-help">
+                        Names only. DevDock never sends their values to this page.
+                      </small>
+                    </div>
+                  </div>
                   <button className="primary" type="submit" disabled={busy || scriptName === ""}>
                     Add service
                   </button>
@@ -511,6 +697,113 @@ function Dashboard({
                   />
                 ))}
               </div>
+            </section>
+
+            <section className="panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="eyebrow">Orchestration</span>
+                  <h3>Profiles</h3>
+                </div>
+                <span className="count">{detail.profiles.length}</span>
+              </div>
+              {detail.services.length === 0 ? (
+                <p className="muted">Add services before creating a profile.</p>
+              ) : (
+                <form
+                  className="stack profile-form"
+                  onSubmit={(event) => void createProfile(event)}
+                >
+                  <label htmlFor="profile-name">Profile name</label>
+                  <input
+                    id="profile-name"
+                    value={profileName}
+                    onChange={(event) => setProfileName(event.target.value)}
+                    placeholder="Full Stack"
+                    required
+                    maxLength={128}
+                  />
+                  <fieldset>
+                    <legend>Services in this profile</legend>
+                    <div className="profile-choice-grid">
+                      {detail.services.map((service) => (
+                        <label className="checkbox-row" key={service.id}>
+                          <input
+                            type="checkbox"
+                            checked={profileMembers.includes(service.id)}
+                            onChange={(event) =>
+                              toggleProfileMember(service.id, event.target.checked)
+                            }
+                          />
+                          <span>{service.displayName}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                  {profileMembers.map((serviceId) => {
+                    const service = detail.services.find((entry) => entry.id === serviceId);
+                    return (
+                      <fieldset key={serviceId} className="dependency-fieldset">
+                        <legend>{service?.displayName ?? serviceId} starts after</legend>
+                        {profileMembers.filter((id) => id !== serviceId).length === 0 ? (
+                          <span className="muted">No other selected service.</span>
+                        ) : (
+                          <div className="profile-choice-grid">
+                            {profileMembers
+                              .filter((id) => id !== serviceId)
+                              .map((dependencyId) => (
+                                <label className="checkbox-row" key={dependencyId}>
+                                  <input
+                                    type="checkbox"
+                                    checked={(profileDependencies[serviceId] ?? []).includes(
+                                      dependencyId,
+                                    )}
+                                    onChange={(event) =>
+                                      toggleProfileDependency(
+                                        serviceId,
+                                        dependencyId,
+                                        event.target.checked,
+                                      )
+                                    }
+                                  />
+                                  <span>
+                                    {detail.services.find((entry) => entry.id === dependencyId)
+                                      ?.displayName ?? dependencyId}
+                                  </span>
+                                </label>
+                              ))}
+                          </div>
+                        )}
+                      </fieldset>
+                    );
+                  })}
+                  <button
+                    className="primary"
+                    type="submit"
+                    disabled={busy || profileName.trim() === "" || profileMembers.length === 0}
+                  >
+                    Create profile
+                  </button>
+                </form>
+              )}
+              {detail.profiles.length === 0 ? (
+                <p className="muted">No profiles configured yet.</p>
+              ) : (
+                <div className="profile-list">
+                  {detail.profiles.map((profile) => (
+                    <ProfileRuntimeCard
+                      key={profile.id}
+                      profile={profile}
+                      serviceNames={
+                        new Map(detail.services.map((service) => [service.id, service.displayName]))
+                      }
+                      csrfToken={csrfToken}
+                      onUnauthorized={onUnauthorized}
+                      onError={handleError}
+                    />
+                  ))}
+                </div>
+              )}
             </section>
 
             {selectedRuntimeServiceId === null && detail.services.length > 0 ? (

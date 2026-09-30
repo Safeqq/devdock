@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
-import type { RunSnapshot } from "@devdock/contracts";
-import type { NpmLauncher, ProcessAdapter } from "@devdock/platform";
+import type { ReadinessProbe, RunSnapshot, ServiceConfig } from "@devdock/contracts";
+import {
+  type NpmLauncher,
+  type ProcessAdapter,
+  probeLoopbackReadiness,
+  type ReadinessProbeResult,
+  type ReadinessProbeTarget,
+} from "@devdock/platform";
 import type { ProjectRegistry } from "./project-registry.js";
 import { RunLogBuffer } from "./run-log-buffer.js";
 import {
@@ -16,12 +22,28 @@ interface ManagedServiceRuntime {
   readonly supervisor: SingleServiceSupervisor;
 }
 
+interface ActiveReadinessProbe {
+  readonly runId: string;
+  readonly controller: AbortController;
+}
+
+type ReadinessProbeRunner = (
+  target: ReadinessProbeTarget,
+  signal?: AbortSignal,
+) => Promise<ReadinessProbeResult>;
+
 export interface ServiceRuntimeManagerOptions {
   readonly registry: ProjectRegistry;
   readonly launcher: NpmLauncher;
   readonly adapterFactory: () => ProcessAdapter;
   readonly daemonSessionId?: string;
+  readonly readinessProbe?: ReadinessProbeRunner;
 }
+
+export type ServiceStartupResult =
+  | { kind: "ready"; snapshot: RunSnapshot }
+  | { kind: "failed"; snapshot: RunSnapshot | null; reason: string }
+  | { kind: "aborted" };
 
 function replaceable(snapshot: RunSnapshot | null): boolean {
   return (
@@ -60,17 +82,21 @@ export class ServiceRuntimeManager {
   readonly #registry: ProjectRegistry;
   readonly #launcher: NpmLauncher;
   readonly #adapterFactory: () => ProcessAdapter;
+  readonly #readinessProbe: ReadinessProbeRunner;
   readonly #daemonSessionId: string;
   readonly #runtimes = new Map<string, ManagedServiceRuntime>();
   readonly #tails = new Map<string, Promise<void>>();
   readonly #logBuffers = new Map<string, RunLogBuffer>();
   readonly #logOrder: string[] = [];
+  readonly #readinessProbes = new Map<string, ActiveReadinessProbe>();
+  readonly #snapshotSubscribers = new Map<string, Set<(snapshot: RunSnapshot) => void>>();
   #closed = false;
 
   constructor(options: ServiceRuntimeManagerOptions) {
     this.#registry = options.registry;
     this.#launcher = options.launcher;
     this.#adapterFactory = options.adapterFactory;
+    this.#readinessProbe = options.readinessProbe ?? probeLoopbackReadiness;
     this.#daemonSessionId = options.daemonSessionId ?? randomUUID();
   }
 
@@ -81,6 +107,7 @@ export class ServiceRuntimeManager {
   start(serviceId: string): Promise<StartOutcome> {
     return this.#serialize(serviceId, async () => {
       if (this.#closed) throw new Error("Service runtime manager is closed");
+      const service = this.#registry.getService(serviceId);
       let runtime = this.#runtimes.get(serviceId);
       if (runtime === undefined) {
         const historical = this.#historicalSnapshot(serviceId);
@@ -108,6 +135,13 @@ export class ServiceRuntimeManager {
       if (outcome.kind === "started" || outcome.kind === "existing") {
         this.#capture(runtime, outcome.snapshot.runId);
       }
+      if (outcome.kind === "started" && service.readiness !== undefined) {
+        const checking = await runtime.supervisor.setReadiness(outcome.snapshot.runId, "checking");
+        if (checking !== null) {
+          this.#beginReadinessProbe(service, runtime, checking.runId);
+          return { ...outcome, snapshot: checking };
+        }
+      }
       return outcome;
     });
   }
@@ -128,6 +162,7 @@ export class ServiceRuntimeManager {
   }
 
   stop(serviceId: string): Promise<StopOutcome> {
+    this.#cancelReadinessProbe(serviceId);
     return this.#serialize(serviceId, async () => {
       const runtime = this.#runtimes.get(serviceId);
       if (runtime === undefined) {
@@ -143,9 +178,69 @@ export class ServiceRuntimeManager {
     });
   }
 
+  waitForStartup(
+    serviceId: string,
+    runId: string,
+    signal?: AbortSignal,
+  ): Promise<ServiceStartupResult> {
+    const service = this.#registry.getService(serviceId);
+    if (signal?.aborted) return Promise.resolve({ kind: "aborted" });
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (result: ServiceStartupResult) => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener("abort", abort);
+        const subscribers = this.#snapshotSubscribers.get(serviceId);
+        subscribers?.delete(observe);
+        if (subscribers?.size === 0) this.#snapshotSubscribers.delete(serviceId);
+        resolve(result);
+      };
+      const evaluate = (snapshot: RunSnapshot | null) => {
+        if (snapshot === null || snapshot.runId !== runId) {
+          finish({ kind: "failed", snapshot, reason: "RUN_CHANGED" });
+          return;
+        }
+        if (
+          snapshot.processState === "running" &&
+          (service.readiness === undefined || snapshot.readinessState === "ready")
+        ) {
+          finish({ kind: "ready", snapshot });
+          return;
+        }
+        if (
+          snapshot.reconciliationState === "unknown" ||
+          snapshot.processState === "stopped" ||
+          snapshot.processState === "stopping" ||
+          snapshot.processState === "exited" ||
+          snapshot.processState === "failed" ||
+          snapshot.readinessState === "unhealthy"
+        ) {
+          finish({
+            kind: "failed",
+            snapshot,
+            reason: snapshot.failureReason ?? "STARTUP_FAILED",
+          });
+        }
+      };
+      const observe = (snapshot: RunSnapshot) => evaluate(snapshot);
+      const abort = () => finish({ kind: "aborted" });
+      const subscribers = this.#snapshotSubscribers.get(serviceId) ?? new Set();
+      subscribers.add(observe);
+      this.#snapshotSubscribers.set(serviceId, subscribers);
+      signal?.addEventListener("abort", abort, { once: true });
+      void this.status(serviceId)
+        .then(({ snapshot }) => evaluate(snapshot))
+        .catch(() => finish({ kind: "failed", snapshot: null, reason: "STATUS_ERROR" }));
+    });
+  }
+
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
+    for (const serviceId of this.#readinessProbes.keys()) {
+      this.#cancelReadinessProbe(serviceId);
+    }
     const serviceIds = [...this.#runtimes.keys()];
     await Promise.allSettled(
       serviceIds.map((serviceId) =>
@@ -171,7 +266,79 @@ export class ServiceRuntimeManager {
   }
 
   #persist(snapshot: RunSnapshot): void {
-    this.#registry.saveRunSnapshot(snapshot);
+    try {
+      this.#registry.saveRunSnapshot(snapshot);
+    } finally {
+      for (const subscriber of this.#snapshotSubscribers.get(snapshot.serviceId) ?? []) {
+        try {
+          subscriber({ ...snapshot });
+        } catch {
+          // A profile observer cannot interrupt lifecycle persistence or another observer.
+        }
+      }
+    }
+  }
+
+  #beginReadinessProbe(
+    service: ServiceConfig,
+    runtime: ManagedServiceRuntime,
+    runId: string,
+  ): void {
+    const readiness = service.readiness;
+    if (readiness === undefined || service.expectedPort === undefined) {
+      throw new Error("A readiness probe requires an expected port");
+    }
+    this.#cancelReadinessProbe(service.id);
+    const active: ActiveReadinessProbe = { runId, controller: new AbortController() };
+    this.#readinessProbes.set(service.id, active);
+    const target = this.#readinessTarget(readiness, service.expectedPort);
+    const task = async () => {
+      let result: ReadinessProbeResult;
+      try {
+        result = await this.#readinessProbe(target, active.controller.signal);
+      } catch {
+        result = active.controller.signal.aborted
+          ? { kind: "aborted" }
+          : { kind: "unhealthy", reason: "timeout" };
+      }
+      if (result.kind === "aborted") return;
+      await this.#serialize(service.id, async () => {
+        if (
+          active.controller.signal.aborted ||
+          this.#readinessProbes.get(service.id) !== active ||
+          this.#runtimes.get(service.id) !== runtime
+        ) {
+          return;
+        }
+        if (result.kind === "ready") {
+          await runtime.supervisor.setReadiness(runId, "ready");
+        } else {
+          await runtime.supervisor.failReadiness(runId, "READINESS_TIMEOUT");
+        }
+      });
+    };
+    void task()
+      .catch(() => {
+        // The probe result is reflected through validated snapshots; no task rejection escapes.
+      })
+      .finally(() => {
+        if (this.#readinessProbes.get(service.id) === active) {
+          this.#readinessProbes.delete(service.id);
+        }
+      });
+  }
+
+  #readinessTarget(readiness: ReadinessProbe, port: number): ReadinessProbeTarget {
+    return readiness.kind === "tcp"
+      ? { kind: "tcp", port, timeoutMs: readiness.timeoutMs }
+      : { kind: "http", port, path: readiness.path, timeoutMs: readiness.timeoutMs };
+  }
+
+  #cancelReadinessProbe(serviceId: string): void {
+    const active = this.#readinessProbes.get(serviceId);
+    if (active === undefined) return;
+    this.#readinessProbes.delete(serviceId);
+    active.controller.abort();
   }
 
   #historicalSnapshot(serviceId: string): RunSnapshot | null {

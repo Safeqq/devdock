@@ -231,3 +231,27 @@ test("snapshot history failure does not release the owned process", async () => 
   assert.equal((await subject.stop()).kind, "stopped");
   assert.ok(observerErrors >= 3);
 });
+
+test("readiness changes independently and a timeout fails the owned startup", async () => {
+  const adapter = new FakeAdapter();
+  const subject = supervisor(adapter);
+  const first = await subject.start();
+  assert.equal(first.snapshot.processState, "running");
+  assert.equal(first.snapshot.readinessState, "unknown");
+  assert.equal(
+    (await subject.setReadiness(first.snapshot.runId, "checking")).processState,
+    "running",
+  );
+  assert.equal((await subject.setReadiness(first.snapshot.runId, "ready")).readinessState, "ready");
+  assert.equal((await subject.stop()).snapshot.readinessState, "unknown");
+
+  const second = await subject.start();
+  await subject.setReadiness(second.snapshot.runId, "checking");
+  const failed = await subject.failReadiness(second.snapshot.runId);
+  assert.equal(failed.kind, "stopped");
+  assert.equal(failed.snapshot.processState, "failed");
+  assert.equal(failed.snapshot.readinessState, "unhealthy");
+  assert.equal(failed.snapshot.failureReason, "READINESS_TIMEOUT");
+  assert.equal(adapter.records[1].result.kind, "exited");
+  assert.equal(await subject.setReadiness(second.snapshot.runId, "ready"), null);
+});

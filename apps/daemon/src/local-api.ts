@@ -8,6 +8,7 @@ import { ProjectFileError } from "@devdock/platform";
 import { RegistryStorageError } from "@devdock/storage";
 import fastifyStatic from "@fastify/static";
 import fastify, { type FastifyRequest } from "fastify";
+import { ProfileRuntimeManager } from "./profile-runtime-manager.js";
 import { type ProjectRegistry, ProjectRegistryError } from "./project-registry.js";
 import { registerProjectRoutes } from "./project-routes.js";
 import type { RunLogBuffer } from "./run-log-buffer.js";
@@ -60,6 +61,7 @@ export interface LocalApiOptions {
   webRoot?: string;
   logBuffers?: ReadonlyMap<string, RunLogBuffer>;
   runtime?: ServiceRuntimeManager;
+  profileRuntime?: ProfileRuntimeManager;
 }
 
 function sequenceCursor(value: unknown): number | null {
@@ -87,10 +89,14 @@ function publicWebPath(method: string, url: string): boolean {
 function projectError(caught: unknown): { status: number; code: string; message: string } | null {
   if (caught instanceof ProjectRegistryError) {
     const status =
-      caught.code === "PROJECT_NOT_FOUND" || caught.code === "SERVICE_NOT_FOUND"
+      caught.code === "PROJECT_NOT_FOUND" ||
+      caught.code === "SERVICE_NOT_FOUND" ||
+      caught.code === "PROFILE_NOT_FOUND"
         ? 404
         : caught.code === "PROJECT_ARCHIVED" ||
             caught.code === "PROJECT_IDENTITY_CHANGED" ||
+            caught.code === "SERVICE_ENV_FILE_UNAVAILABLE" ||
+            caught.code === "SERVICE_ENV_KEY_MISSING" ||
             caught.code === "OPEN_APP_PORT_UNCONFIGURED"
           ? 409
           : 400;
@@ -116,9 +122,17 @@ export function createLocalApiServer(options: LocalApiOptions = {}) {
   if (options.runtime !== undefined && options.logBuffers !== undefined) {
     throw new Error("Service runtime provides its own log buffers");
   }
+  if (options.profileRuntime !== undefined && options.runtime === undefined) {
+    throw new Error("Profile runtime requires a service runtime");
+  }
+  const profileRuntime =
+    options.profileRuntime ??
+    (options.runtime === undefined || options.registry === undefined
+      ? undefined
+      : new ProfileRuntimeManager({ registry: options.registry, runtime: options.runtime }));
   const logBuffers = options.runtime?.logBuffers ?? options.logBuffers;
   const now = options.now ?? Date.now;
-  const app = fastify({ logger: false, bodyLimit: 1_024, trustProxy: false });
+  const app = fastify({ logger: false, bodyLimit: 65_536, trustProxy: false });
   const pairingCode = randomToken(16);
   const pairingExpiresAt = now() + PAIRING_TTL_MS;
   let failedPairingAttempts = 0;
@@ -346,11 +360,12 @@ export function createLocalApiServer(options: LocalApiOptions = {}) {
       response.end();
     }
     eventClients.clear();
+    await profileRuntime?.close();
     await options.runtime?.close();
   });
 
   if (options.registry !== undefined && options.launcher !== undefined) {
-    registerProjectRoutes(app, options.registry, options.launcher, options.runtime);
+    registerProjectRoutes(app, options.registry, options.launcher, options.runtime, profileRuntime);
   }
 
   if (options.webRoot !== undefined) {

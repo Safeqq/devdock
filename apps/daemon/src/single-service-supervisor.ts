@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Readable } from "node:stream";
-import { type RunSnapshot, RunSnapshotSchema } from "@devdock/contracts";
+import { type ReadinessState, type RunSnapshot, RunSnapshotSchema } from "@devdock/contracts";
 import type {
   ManagedProcessHandle,
   OwnershipInspection,
@@ -46,6 +46,7 @@ export class SingleServiceSupervisor {
   #latestStreams: { runId: string; stdout: Readable; stderr: Readable } | undefined;
   #snapshot: RunSnapshot | null = null;
   #stopRequestedRunId: string | undefined;
+  #readinessFailure: { runId: string; reason: string } | undefined;
   #tail: Promise<void> = Promise.resolve();
 
   constructor(
@@ -122,6 +123,43 @@ export class SingleServiceSupervisor {
     });
   }
 
+  setReadiness(
+    runId: string,
+    readinessState: Extract<ReadinessState, "checking" | "ready">,
+  ): Promise<RunSnapshot | null> {
+    return this.#serialize(async () => {
+      const current = this.#snapshot;
+      if (
+        current === null ||
+        current.runId !== runId ||
+        this.#handle?.runId !== runId ||
+        current.reconciliationState === "unknown" ||
+        (current.processState !== "starting" && current.processState !== "running")
+      ) {
+        return null;
+      }
+      return this.#set({ ...current, readinessState });
+    });
+  }
+
+  failReadiness(runId: string, reason = "READINESS_TIMEOUT"): Promise<StopOutcome | null> {
+    return this.#serialize(async () => {
+      const current = this.#snapshot;
+      if (
+        current === null ||
+        current.runId !== runId ||
+        this.#handle?.runId !== runId ||
+        current.reconciliationState === "unknown" ||
+        (current.processState !== "starting" && current.processState !== "running")
+      ) {
+        return null;
+      }
+      this.#readinessFailure = { runId, reason };
+      this.#set({ ...current, readinessState: "unhealthy", failureReason: reason });
+      return this.#stopLocked();
+    });
+  }
+
   #serialize<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.#tail.then(operation);
     this.#tail = result.then(
@@ -195,6 +233,7 @@ export class SingleServiceSupervisor {
       startedAt: new Date().toISOString(),
     });
     this.#stopRequestedRunId = undefined;
+    this.#readinessFailure = undefined;
 
     let spawned: ManagedProcessHandle;
     try {
@@ -347,18 +386,29 @@ export class SingleServiceSupervisor {
       throw new Error("Cannot close an inactive run");
     }
     const stopped = this.#stopRequestedRunId === handle.runId;
-    const processState = stopped ? "stopped" : result.code === 0 ? "exited" : "failed";
+    const readinessFailure =
+      this.#readinessFailure?.runId === handle.runId ? this.#readinessFailure : undefined;
+    const processState =
+      readinessFailure !== undefined
+        ? "failed"
+        : stopped
+          ? "stopped"
+          : result.code === 0
+            ? "exited"
+            : "failed";
     this.#handle = undefined;
     this.#stopRequestedRunId = undefined;
+    this.#readinessFailure = undefined;
     const next: RunSnapshot = {
       ...current,
       processState,
-      readinessState: "unknown",
+      readinessState: readinessFailure === undefined ? "unknown" : "unhealthy",
       reconciliationState: "known",
       endedAt: new Date().toISOString(),
       exitCode: result.code,
     };
-    if (processState === "failed") next.failureReason = "PROCESS_EXITED_WITH_FAILURE";
+    if (readinessFailure !== undefined) next.failureReason = readinessFailure.reason;
+    else if (processState === "failed") next.failureReason = "PROCESS_EXITED_WITH_FAILURE";
     else delete next.failureReason;
     return this.#set(next);
   }

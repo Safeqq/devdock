@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -112,7 +113,9 @@ test("authenticated project API persists selections and only previews npm execut
 
     const detail = await call(origin, `/api/projects/${project.id}`, { headers: { cookie } });
     assert.equal(detail.status, 200);
-    assert.deepEqual((await detail.json()).services, []);
+    const initialDetail = await detail.json();
+    assert.deepEqual(initialDetail.services, []);
+    assert.deepEqual(initialDetail.profiles, []);
     const scripts = await call(origin, `/api/projects/${project.id}/scripts`, {
       headers: { cookie },
     });
@@ -149,6 +152,53 @@ test("authenticated project API persists selections and only previews npm execut
     );
     assert.equal(selected.status, 201);
     const { service } = await selected.json();
+    const secondarySelection = await call(
+      origin,
+      `/api/projects/${project.id}/services`,
+      mutation(origin, cookie, csrfToken, {
+        scriptName: "dev",
+        displayName: "Worker",
+      }),
+    );
+    assert.equal(secondarySelection.status, 201);
+    const { service: worker } = await secondarySelection.json();
+    const cycle = await call(
+      origin,
+      `/api/projects/${project.id}/profiles`,
+      mutation(origin, cookie, csrfToken, {
+        displayName: "Cycle",
+        services: [
+          { serviceId: service.id, dependsOn: [worker.id] },
+          { serviceId: worker.id, dependsOn: [service.id] },
+        ],
+      }),
+    );
+    assert.equal(cycle.status, 400);
+    const cycleError = await cycle.json();
+    assert.equal(cycleError.error.code, "PROFILE_CYCLE");
+    assert.match(cycleError.error.message, /Dev server -> Worker -> Dev server/u);
+    const profileResponse = await call(
+      origin,
+      `/api/projects/${project.id}/profiles`,
+      mutation(origin, cookie, csrfToken, {
+        displayName: "Backend Only",
+        services: [{ serviceId: service.id, dependsOn: [] }],
+      }),
+    );
+    assert.equal(profileResponse.status, 201);
+    const { profile } = await profileResponse.json();
+    assert.equal(profile.displayName, "Backend Only");
+    assert.equal(
+      (await call(origin, `/api/profiles/${profile.id}/status`, { headers: { cookie } })).status,
+      501,
+    );
+    const configuredDetail = await call(origin, `/api/projects/${project.id}`, {
+      headers: { cookie },
+    });
+    assert.deepEqual(
+      (await configuredDetail.json()).profiles.map((entry) => entry.id),
+      [profile.id],
+    );
     const preview = await call(origin, `/api/services/${service.id}/preview`, {
       headers: { cookie },
     });
@@ -197,6 +247,107 @@ test("authenticated project API persists selections and only previews npm execut
   } finally {
     await api?.close();
     store?.close();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("service diagnostics report port and key presence without exposing environment values", {
+  timeout: 12_000,
+}, async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "devdock-diagnostics-api-"));
+  const projectPath = join(tempRoot, "diagnostics project");
+  const sentinel = createServer((_request, response) => response.end("sentinel"));
+  let store;
+  let api;
+  try {
+    await mkdir(projectPath);
+    await writeFile(
+      join(projectPath, "package.json"),
+      JSON.stringify({ name: "diagnostics-fixture", scripts: { dev: "node server.mjs" } }),
+    );
+    await writeFile(join(projectPath, "server.mjs"), "process.exit(0);\n");
+    await writeFile(
+      join(projectPath, ".env.diagnostics"),
+      "API_TOKEN=diagnostic-secret-must-not-leak\n",
+    );
+    await new Promise((resolveListen, reject) => {
+      sentinel.once("error", reject);
+      sentinel.listen({ host: "127.0.0.1", port: 0 }, resolveListen);
+    });
+    const address = sentinel.address();
+    assert.notEqual(address, null);
+    assert.equal(typeof address, "object");
+
+    store = await RegistryDatabase.open(join(tempRoot, "data", "registry.sqlite"));
+    const registry = new ProjectRegistry(store);
+    api = createLocalApiServer({ registry, launcher: await NpmLauncher.locate() });
+    const origin = await api.listen(0);
+    const paired = await call(origin, "/api/pair", {
+      method: "POST",
+      headers: { origin, "content-type": "application/json" },
+      body: JSON.stringify({ code: api.pairingCode }),
+    });
+    const cookie = paired.headers.get("set-cookie").split(";")[0];
+    const { csrfToken } = await paired.json();
+    const registered = await call(
+      origin,
+      "/api/projects",
+      mutation(origin, cookie, csrfToken, { path: projectPath }),
+    );
+    const { project } = await registered.json();
+
+    assert.equal(
+      (
+        await call(
+          origin,
+          `/api/projects/${project.id}/services`,
+          mutation(origin, cookie, csrfToken, {
+            scriptName: "dev",
+            envFiles: ["../outside.env"],
+          }),
+        )
+      ).status,
+      400,
+    );
+    const selected = await call(
+      origin,
+      `/api/projects/${project.id}/services`,
+      mutation(origin, cookie, csrfToken, {
+        scriptName: "dev",
+        expectedPort: address.port,
+        envFiles: [".env.diagnostics"],
+        requiredEnvKeys: ["API_TOKEN", "MISSING_KEY"],
+      }),
+    );
+    assert.equal(selected.status, 201);
+    const { service } = await selected.json();
+    assert.equal((await call(origin, `/api/services/${service.id}/diagnostics`)).status, 401);
+
+    const response = await call(origin, `/api/services/${service.id}/diagnostics`, {
+      headers: { cookie },
+    });
+    assert.equal(response.status, 200);
+    const responseText = await response.text();
+    assert.equal(responseText.includes("diagnostic-secret-must-not-leak"), false);
+    const diagnostics = JSON.parse(responseText);
+    assert.deepEqual(diagnostics.port, { status: "in_use", port: address.port });
+    assert.deepEqual(diagnostics.environment.files, [
+      { path: ".env.diagnostics", status: "loaded" },
+    ]);
+    assert.deepEqual(diagnostics.environment.keys, [
+      { name: "API_TOKEN", present: true },
+      { name: "MISSING_KEY", present: false },
+    ]);
+    assert.equal(diagnostics.environment.allRequiredKeysPresent, false);
+    assert.equal((await call(`http://127.0.0.1:${address.port}`, "/")).status, 200);
+  } finally {
+    await api?.close();
+    store?.close();
+    if (sentinel.listening) {
+      await new Promise((resolveClose, reject) => {
+        sentinel.close((error) => (error ? reject(error) : resolveClose()));
+      });
+    }
     await rm(tempRoot, { recursive: true, force: true });
   }
 });

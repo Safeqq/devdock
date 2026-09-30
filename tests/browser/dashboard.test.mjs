@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { test } from "node:test";
@@ -33,6 +34,21 @@ async function waitForEndpointToClose(url, timeoutMs = 5_000) {
     await delay(50);
   }
   throw new Error(`Endpoint stayed open after browser Stop: ${url}`);
+}
+
+async function availablePort() {
+  const reservation = createServer();
+  await new Promise((resolveListen, reject) => {
+    reservation.once("error", reject);
+    reservation.listen({ host: "127.0.0.1", port: 0 }, resolveListen);
+  });
+  const address = reservation.address();
+  assert.notEqual(address, null);
+  assert.equal(typeof address, "object");
+  await new Promise((resolveClose, reject) => {
+    reservation.close((error) => (error ? reject(error) : resolveClose()));
+  });
+  return address.port;
 }
 
 async function browserExecutable() {
@@ -92,6 +108,10 @@ test("browser pairs and manages project configuration without executing a script
       join(projectPath, "marker.mjs"),
       "import { writeFileSync } from 'node:fs'; writeFileSync(new URL('./marker.out', import.meta.url), 'ran');",
     );
+    await writeFile(
+      join(projectPath, ".env.browser"),
+      "BROWSER_TOKEN=browser-secret-must-not-render\n",
+    );
     store = await RegistryDatabase.open(join(tempRoot, "data", "registry.sqlite"));
     api = createLocalApiServer({
       registry: new ProjectRegistry(store),
@@ -116,8 +136,27 @@ test("browser pairs and manages project configuration without executing a script
     await page.getByRole("button", { name: "Add project" }).click();
     await page.getByRole("heading", { name: "Browser Fixture" }).waitFor();
     await page.getByLabel("App port (optional)").fill("4300");
+    await page.getByLabel("Environment files (optional)").fill(".env.browser");
+    await page.getByLabel("Required environment keys (optional)").fill("BROWSER_TOKEN");
     await page.getByRole("button", { name: "Add service" }).click();
     await page.getByRole("heading", { name: "dev" }).waitFor();
+    const profileForm = page.locator("form.profile-form");
+    await profileForm.getByLabel("Profile name").fill("Backend Only");
+    await profileForm.getByLabel("dev", { exact: true }).check();
+    await profileForm.getByRole("button", { name: "Create profile" }).click();
+    const profileCard = page.locator("article.profile-card").filter({ hasText: "Backend Only" });
+    await profileCard.getByRole("heading", { name: "Backend Only" }).waitFor();
+    await profileCard.locator(".state-pill").getByText("Idle", { exact: true }).waitFor();
+    const serviceCard = page.locator("article.service-card").filter({ hasText: "npm run dev" });
+    await serviceCard.getByRole("button", { name: "Run dev diagnostics" }).click();
+    const diagnostics = serviceCard.getByRole("region", { name: "dev diagnostics" });
+    await diagnostics.getByRole("list", { name: "Required environment keys" }).waitFor();
+    await diagnostics.getByText("BROWSER_TOKEN", { exact: true }).waitFor();
+    await diagnostics.getByText("Present", { exact: true }).waitFor();
+    assert.equal(
+      (await diagnostics.textContent()).includes("browser-secret-must-not-render"),
+      false,
+    );
     await page.getByRole("button", { name: "View command" }).click();
     await page.locator(".preview pre").getByText(/"cwd"/u).waitFor();
     await page.getByRole("button", { name: "Prepare Open App" }).click();
@@ -154,6 +193,7 @@ test("browser starts, follows logs, survives tab close, and stops an npm service
   let api;
   let browser;
   try {
+    const expectedPort = await availablePort();
     await mkdir(projectPath);
     await writeFile(
       join(projectPath, "package.json"),
@@ -169,6 +209,7 @@ test("browser starts, follows logs, survives tab close, and stops an npm service
       `await import(${JSON.stringify(pathToFileURL(httpFixture).href)});\n`,
       "utf8",
     );
+    await writeFile(join(projectPath, ".env.lifecycle"), `PORT=${expectedPort}\n`, "utf8");
 
     store = await RegistryDatabase.open(join(tempRoot, "data", "registry.sqlite"));
     const registry = new ProjectRegistry(store);
@@ -200,19 +241,26 @@ test("browser starts, follows logs, survives tab close, and stops an npm service
     await page.getByLabel("Display name (optional)").fill("Runtime Browser Fixture");
     await page.getByRole("button", { name: "Add project" }).click();
     await page.getByRole("heading", { name: "Runtime Browser Fixture" }).waitFor();
+    await page.getByLabel("App port (optional)").fill(String(expectedPort));
+    await page.getByLabel("Readiness probe").selectOption("http");
+    await page.getByLabel("Readiness timeout (ms)").fill("5000");
+    await page.getByLabel("HTTP readiness path").fill("/ready");
+    await page.getByLabel("Environment files (optional)").fill(".env.lifecycle");
     await page.getByRole("button", { name: "Add service" }).click();
 
     let serviceCard = page.locator("article.service-card").filter({ hasText: "npm run serve" });
     await serviceCard.getByRole("heading", { name: "serve", exact: true }).waitFor();
     await serviceCard.getByRole("button", { name: "Start serve" }).click();
     await serviceCard.locator(".status-chip").getByText("Running", { exact: true }).waitFor();
+    await serviceCard.locator(".runtime-facts").getByText("Ready", { exact: true }).waitFor();
     const readyLine = serviceCard
       .getByRole("list", { name: "serve logs" })
       .locator("code")
       .filter({ hasText: '"type":"listening"' });
     await readyLine.waitFor({ timeout: 10_000 });
     const ready = JSON.parse(await readyLine.last().textContent());
-    const serviceUrl = `http://127.0.0.1:${ready.port}/ready`;
+    assert.equal(ready.port, expectedPort);
+    const serviceUrl = `http://127.0.0.1:${expectedPort}/ready`;
     assert.equal((await fetch(serviceUrl)).status, 200);
 
     await page.close();
@@ -231,6 +279,20 @@ test("browser starts, follows logs, survives tab close, and stops an npm service
       .waitFor();
     await serviceCard.getByRole("button", { name: "Stop serve" }).click();
     await serviceCard.locator(".status-chip").getByText("Stopped", { exact: true }).waitFor();
+    await waitForEndpointToClose(serviceUrl);
+
+    const profileForm = page.locator("form.profile-form");
+    await profileForm.getByLabel("Profile name").fill("Backend Only");
+    await profileForm.getByLabel("serve", { exact: true }).check();
+    await profileForm.getByRole("button", { name: "Create profile" }).click();
+    const profileCard = page.locator("article.profile-card").filter({ hasText: "Backend Only" });
+    await profileCard.getByRole("button", { name: "Start profile" }).click();
+    await profileCard.locator(".state-pill").getByText("Ready", { exact: true }).waitFor({
+      timeout: 10_000,
+    });
+    assert.equal((await fetch(serviceUrl)).status, 200);
+    await profileCard.getByRole("button", { name: "Stop profile" }).click();
+    await profileCard.locator(".state-pill").getByText("Stopped", { exact: true }).waitFor();
     await waitForEndpointToClose(serviceUrl);
 
     const project = registry.listProjects()[0];

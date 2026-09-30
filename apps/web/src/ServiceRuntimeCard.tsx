@@ -4,6 +4,8 @@ import {
   LogGapEventSchema,
   type RunSnapshot,
   type ServiceConfig,
+  type ServiceDiagnosticsResponse,
+  ServiceDiagnosticsResponseSchema,
   ServiceRuntimeStatusResponseSchema,
   ServiceStartResponseSchema,
   ServiceStopResponseSchema,
@@ -15,7 +17,7 @@ const MAX_RENDERED_LOGS = 500;
 
 type Ownership = "owned" | "exited" | "unknown" | null;
 type RuntimeStatus = { snapshot: RunSnapshot | null; ownership: Ownership };
-type RuntimeAction = "start" | "stop" | "refresh";
+type RuntimeAction = "start" | "stop" | "refresh" | "diagnostics";
 type LogConnection = "idle" | "connecting" | "live" | "disconnected";
 
 interface ServiceRuntimeCardProps {
@@ -34,6 +36,18 @@ interface ServiceRuntimeCardProps {
 function runtimeError(caught: unknown): string {
   if (caught instanceof ApiError) return `${caught.code}: ${caught.message}`;
   return "Runtime status is unavailable.";
+}
+
+function diagnosticsErrorMessage(caught: unknown): string {
+  if (caught instanceof ApiError) return `${caught.code}: ${caught.message}`;
+  return "Diagnostics are unavailable.";
+}
+
+function diagnosticLabel(status: string): string {
+  return status
+    .split("_")
+    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
 }
 
 function processLabel(status: RuntimeStatus | null): string {
@@ -71,6 +85,8 @@ export function ServiceRuntimeCard({
   const [logConnection, setLogConnection] = useState<LogConnection>("idle");
   const [logError, setLogError] = useState<string | null>(null);
   const [gapMessage, setGapMessage] = useState<string | null>(null);
+  const [diagnostics, setDiagnostics] = useState<ServiceDiagnosticsResponse | null>(null);
+  const [diagnosticsError, setDiagnosticsError] = useState<string | null>(null);
 
   const refreshStatus = useCallback(
     async (signal?: AbortSignal) => {
@@ -96,6 +112,25 @@ export function ServiceRuntimeCard({
     void refreshStatus(controller.signal);
     return () => controller.abort();
   }, [refreshStatus]);
+
+  const readinessChecking = status?.snapshot?.readinessState === "checking";
+  useEffect(() => {
+    if (!readinessChecking) return;
+    const controller = new AbortController();
+    let timer: number | undefined;
+    const poll = () => {
+      timer = window.setTimeout(() => {
+        void refreshStatus(controller.signal).finally(() => {
+          if (!controller.signal.aborted) poll();
+        });
+      }, 250);
+    };
+    poll();
+    return () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [readinessChecking, refreshStatus]);
 
   const runId = status?.snapshot?.runId ?? null;
   useEffect(() => {
@@ -180,6 +215,23 @@ export function ServiceRuntimeCard({
     setBusy(null);
   }
 
+  async function runDiagnostics() {
+    setBusy("diagnostics");
+    setDiagnosticsError(null);
+    setDiagnostics(null);
+    try {
+      const loaded = await apiGet(`/api/services/${service.id}/diagnostics`, (value) =>
+        ServiceDiagnosticsResponseSchema.parse(value),
+      );
+      setDiagnostics(loaded);
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.status === 401) onUnauthorized();
+      else setDiagnosticsError(diagnosticsErrorMessage(caught));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const snapshot = status?.snapshot ?? null;
   const blocked = snapshot?.reconciliationState === "unknown" || status?.ownership === "unknown";
   const canStart = status !== null && statusError === null && terminal(snapshot) && !blocked;
@@ -193,6 +245,9 @@ export function ServiceRuntimeCard({
           <p className="muted">
             npm run {service.scriptName}
             {service.expectedPort ? ` · port ${service.expectedPort}` : ""}
+            {service.readiness
+              ? ` · ${service.readiness.kind.toUpperCase()} readiness (${service.readiness.timeoutMs} ms)`
+              : ""}
           </p>
         </div>
         <span className={`status-chip state-${snapshot?.processState ?? "stopped"}`}>
@@ -210,6 +265,9 @@ export function ServiceRuntimeCard({
           Ownership is unknown. Start and Stop stay blocked until the run is reconciled.
         </p>
       )}
+      {snapshot?.failureReason && !blocked ? (
+        <p className="message error compact">{diagnosticLabel(snapshot.failureReason)}</p>
+      ) : null}
 
       <div className="actions">
         <button
@@ -245,6 +303,15 @@ export function ServiceRuntimeCard({
         <button type="button" className="quiet" onClick={onPreview}>
           View command
         </button>
+        <button
+          type="button"
+          className="quiet"
+          disabled={busy !== null}
+          onClick={() => void runDiagnostics()}
+          aria-label={`Run ${service.displayName} diagnostics`}
+        >
+          {busy === "diagnostics" ? "Checking…" : "Run diagnostics"}
+        </button>
         <button type="button" className="quiet" onClick={onPrepareOpenApp}>
           Prepare Open App
         </button>
@@ -267,7 +334,7 @@ export function ServiceRuntimeCard({
           </div>
           <div>
             <dt>Readiness</dt>
-            <dd>{snapshot.readinessState}</dd>
+            <dd>{diagnosticLabel(snapshot.readinessState)}</dd>
           </div>
           <div>
             <dt>Ownership</dt>
@@ -281,6 +348,76 @@ export function ServiceRuntimeCard({
           <strong>Command preview</strong>
           <pre>{JSON.stringify(preview, null, 2)}</pre>
         </div>
+      )}
+
+      {diagnosticsError && (
+        <p className="message error compact" role="alert">
+          {diagnosticsError}
+        </p>
+      )}
+
+      {diagnostics && (
+        <section className="diagnostics-view" aria-label={`${service.displayName} diagnostics`}>
+          <div className="runtime-heading">
+            <div>
+              <span className="eyebrow">Diagnostics</span>
+              <h4>Configuration checks</h4>
+            </div>
+            <span
+              className={`diagnostic-state ${
+                diagnostics.environment.allRequiredKeysPresent ? "pass" : "attention"
+              }`}
+            >
+              {diagnostics.environment.keys.length === 0
+                ? "No required keys"
+                : diagnostics.environment.allRequiredKeysPresent
+                  ? "Keys present"
+                  : "Keys missing"}
+            </span>
+          </div>
+          <dl className="diagnostic-facts">
+            <div>
+              <dt>Expected port</dt>
+              <dd>
+                {diagnosticLabel(diagnostics.port.status)}
+                {"port" in diagnostics.port ? ` · ${diagnostics.port.port}` : ""}
+              </dd>
+            </div>
+            <div>
+              <dt>Port action</dt>
+              <dd>Advisory only</dd>
+            </div>
+          </dl>
+          {diagnostics.environment.files.length > 0 ? (
+            <ul className="diagnostic-list" aria-label="Environment files">
+              {diagnostics.environment.files.map((file) => (
+                <li key={file.path}>
+                  <code>{file.path}</code>
+                  <span>{diagnosticLabel(file.status)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="muted diagnostic-empty">No environment files configured.</p>
+          )}
+          {diagnostics.environment.keys.length > 0 ? (
+            <ul className="diagnostic-list" aria-label="Required environment keys">
+              {diagnostics.environment.keys.map((key) => (
+                <li key={key.name}>
+                  <code>{key.name}</code>
+                  <span className={key.present ? "diagnostic-pass" : "diagnostic-attention"}>
+                    {key.present ? "Present" : "Missing"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="muted diagnostic-empty">No required environment keys configured.</p>
+          )}
+          <p className="diagnostic-note">
+            Values stay in the daemon and are never included in this response.
+          </p>
+        </section>
       )}
 
       {selected && (

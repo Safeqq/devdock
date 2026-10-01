@@ -266,6 +266,25 @@ test("POSIX adapter escalates an uncooperative process group from SIGTERM to SIG
     const ready = await events.next("stubborn-listening");
     const url = `http://127.0.0.1:${ready.port}/ready`;
     assert.equal((await fetch(url)).status, 200);
+
+    const originalKill = process.kill;
+    let permissionProbeInjected = false;
+    process.kill = (pid, signal) => {
+      if (!permissionProbeInjected && pid === -handle.pid && signal === 0) {
+        permissionProbeInjected = true;
+        const error = new Error("simulated process-group permission probe");
+        error.code = "EPERM";
+        throw error;
+      }
+      return originalKill(pid, signal);
+    };
+    try {
+      assert.equal(await adapter.inspectOwnership(handle), "owned");
+      assert.equal(permissionProbeInjected, true);
+    } finally {
+      process.kill = originalKill;
+    }
+
     assert.equal(await adapter.requestGracefulStop(handle), "requested");
     assert.deepEqual(await adapter.waitForExit(handle, 150), { kind: "timeout" });
     assert.equal((await fetch(url)).status, 200);

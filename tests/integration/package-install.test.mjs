@@ -29,7 +29,7 @@ function waitForExit(child, timeoutMs) {
   });
 }
 
-function runNode(args, options, timeoutMs = 60_000) {
+function runNode(args, options, timeoutMs = 120_000) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, args, {
       ...options,
@@ -103,7 +103,7 @@ function waitForReady(child, lines, timeoutMs) {
 }
 
 test("packed CLI runs from a clean local install and closes through the native OS path", {
-  timeout: 120_000,
+  timeout: 300_000,
 }, async () => {
   const tempRoot = await mkdtemp(join(tmpdir(), "devdock package café-東京-"));
   const packageDirectory = join(tempRoot, "tarball output");

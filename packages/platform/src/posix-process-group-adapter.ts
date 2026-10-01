@@ -48,6 +48,7 @@ function groupPresence(processGroupId: number): GroupPresence {
   } catch (caught) {
     const code = errorCode(caught);
     if (code === "ESRCH") return "absent";
+    if (code === "EPERM") return "present";
     return "unknown";
   }
 }

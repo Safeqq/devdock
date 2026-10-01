@@ -27,7 +27,11 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-const runner = spawn(process.execPath, ["--test", ...files], { stdio: "inherit" });
+const runnerArguments = ["--test"];
+if (suite === "integration") runnerArguments.push("--test-concurrency=1");
+runnerArguments.push(...files);
+
+const runner = spawn(process.execPath, runnerArguments, { stdio: "inherit" });
 runner.once("error", (error) => {
   console.error(error.message);
   process.exitCode = 1;

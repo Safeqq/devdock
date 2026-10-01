@@ -217,7 +217,7 @@ test("browser starts, follows logs, survives tab close, and stops an npm service
     );
     await writeFile(
       join(projectPath, "server.mjs"),
-      `await import(${JSON.stringify(pathToFileURL(httpFixture).href)});\nawait new Promise((resolve) => setTimeout(resolve, 250));\nfor (let index = 1; index <= 650; index += 1) {\n  console.log(\`flood-\${index}\`);\n  if (index % 20 === 0) await new Promise((resolve) => setTimeout(resolve, 0));\n}\n`,
+      `await import(${JSON.stringify(pathToFileURL(httpFixture).href)});\nawait new Promise((resolve) => setTimeout(resolve, 250));\nfor (let index = 1; index <= 650; index += 1) {\n  console.log(\`flood-\${index}\`);\n  if (index % 20 === 0) await new Promise((resolve) => setTimeout(resolve, 0));\n}\nconsole.log(JSON.stringify({ type: "browser-log-ready", port: ${expectedPort} }));\n`,
       "utf8",
     );
     await writeFile(join(projectPath, ".env.lifecycle"), `PORT=${expectedPort}\n`, "utf8");
@@ -267,7 +267,7 @@ test("browser starts, follows logs, survives tab close, and stops an npm service
     const readyLine = serviceCard
       .getByRole("list", { name: "serve logs" })
       .locator("code")
-      .filter({ hasText: '"type":"listening"' });
+      .filter({ hasText: '"type":"browser-log-ready"' });
     await readyLine.waitFor({ timeout: 10_000 });
     const ready = JSON.parse(await readyLine.last().textContent());
     await serviceCard.locator(".log-lines li").nth(499).waitFor();
@@ -288,7 +288,7 @@ test("browser starts, follows logs, survives tab close, and stops an npm service
     await serviceCard.getByRole("button", { name: "View runtime" }).click();
     await serviceCard
       .getByRole("list", { name: "serve logs" })
-      .getByText(/"type":"listening"/u)
+      .getByText(/"type":"browser-log-ready"/u)
       .waitFor();
     await serviceCard.getByRole("button", { name: "Stop serve" }).click();
     await serviceCard.locator(".status-chip").getByText("Stopped", { exact: true }).waitFor();

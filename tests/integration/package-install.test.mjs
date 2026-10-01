@@ -189,6 +189,6 @@ test("packed CLI runs from a clean local install and closes through the native O
       await waitForExit(child, 3_000).catch(() => undefined);
     }
     lines?.close();
-    await rm(tempRoot, { recursive: true, force: true });
+    await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

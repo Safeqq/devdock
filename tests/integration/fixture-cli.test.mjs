@@ -75,8 +75,10 @@ function createEventReader(child) {
   };
 }
 
-test("Windows fixture CLI reuses a run, restarts it, and stops the replacement", {
-  skip: process.platform !== "win32" ? "Windows adapter only" : false,
+test("fixture CLI reuses a run, restarts it, and stops the replacement", {
+  skip: !["win32", "darwin", "linux"].includes(process.platform)
+    ? "No fixture adapter for this platform"
+    : false,
   timeout: 15_000,
 }, async () => {
   const child = spawn(process.execPath, [cli], { stdio: ["pipe", "pipe", "pipe"] });

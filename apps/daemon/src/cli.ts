@@ -2,7 +2,7 @@ import { realpath } from "node:fs/promises";
 import { dirname } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
-import { WindowsFixtureProcessAdapter } from "@devdock/platform";
+import { PosixFixtureProcessAdapter, WindowsFixtureProcessAdapter } from "@devdock/platform";
 import { SingleServiceSupervisor, type StartOutcome } from "./single-service-supervisor.js";
 
 const fixturePath = fileURLToPath(
@@ -14,12 +14,16 @@ function emit(event: Record<string, unknown>): void {
 }
 
 async function main(): Promise<void> {
-  if (process.platform !== "win32") {
-    throw new Error("Fixture control is currently available only on native Windows");
+  if (!(["win32", "darwin", "linux"] as NodeJS.Platform[]).includes(process.platform)) {
+    throw new Error("Fixture control is unavailable on this platform");
   }
 
   const canonicalCwd = await realpath(dirname(fixturePath));
-  const supervisor = new SingleServiceSupervisor(new WindowsFixtureProcessAdapter(), {
+  const adapter =
+    process.platform === "win32"
+      ? new WindowsFixtureProcessAdapter()
+      : new PosixFixtureProcessAdapter();
+  const supervisor = new SingleServiceSupervisor(adapter, {
     executable: process.execPath,
     args: [fixturePath],
     canonicalCwd,

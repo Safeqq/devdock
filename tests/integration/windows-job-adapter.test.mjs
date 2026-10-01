@@ -10,10 +10,17 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { RunLogBuffer } from "../../apps/daemon/dist/run-log-buffer.js";
 import { SingleServiceSupervisor } from "../../apps/daemon/dist/single-service-supervisor.js";
-import { NpmLauncher, WindowsJobProcessAdapter } from "../../packages/platform/dist/index.js";
+import {
+  createPlatformProcessAdapter,
+  NpmLauncher,
+  productionProcessControlAvailable,
+} from "../../packages/platform/dist/index.js";
 
 const naturalExit = fileURLToPath(new URL("../fixtures/job-natural-exit.mjs", import.meta.url));
 const httpFixture = fileURLToPath(new URL("../fixtures/http-server.mjs", import.meta.url));
+const posixStubbornTree = fileURLToPath(
+  new URL("../fixtures/posix-stubborn-tree.mjs", import.meta.url),
+);
 
 function eventReader(stream) {
   const lines = createInterface({ input: stream });
@@ -121,8 +128,10 @@ function tempCleanupRoot(path) {
   return cleanupRoot;
 }
 
-test("WindowsJobProcessAdapter force-stops an npm script tree and preserves a sentinel", {
-  skip: process.platform !== "win32" ? "Requires native Windows Job Objects" : false,
+test("production adapter stops an npm script tree and preserves a sentinel", {
+  skip: !productionProcessControlAvailable()
+    ? "No production process adapter for this platform"
+    : false,
   timeout: 30_000,
 }, async () => {
   const tempRoot = await mkdtemp(join(tmpdir(), "devdock-job-adapter-"));
@@ -158,7 +167,7 @@ test("WindowsJobProcessAdapter force-stops an npm script tree and preserves a se
 
     const launcher = await NpmLauncher.locate();
     const plan = launcher.plan("serve:job", await realpath(projectPath));
-    supervisor = new SingleServiceSupervisor(new WindowsJobProcessAdapter(), plan, {
+    supervisor = new SingleServiceSupervisor(createPlatformProcessAdapter(), plan, {
       graceTimeoutMs: 100,
       forceTimeoutMs: 5_000,
     });
@@ -177,7 +186,7 @@ test("WindowsJobProcessAdapter force-stops an npm script tree and preserves a se
 
     const stopped = await supervisor.stop();
     assert.equal(stopped.kind, "stopped");
-    assert.equal(stopped.snapshot.exitCode, 1);
+    assert.ok(stopped.snapshot.endedAt);
     await waitForEndpointToClose(serviceUrl);
     assert.equal((await fetch(sentinelUrl)).status, 200);
     assert.equal(hasExited(sentinel), false);
@@ -199,15 +208,17 @@ test("WindowsJobProcessAdapter force-stops an npm script tree and preserves a se
   }
 });
 
-test("WindowsJobProcessAdapter reports natural exit after both streams end", {
-  skip: process.platform !== "win32" ? "Requires native Windows Job Objects" : false,
+test("production adapter reports natural exit after both streams end", {
+  skip: !productionProcessControlAvailable()
+    ? "No production process adapter for this platform"
+    : false,
   timeout: 15_000,
 }, async () => {
   const tempRoot = await mkdtemp(join(tmpdir(), "devdock-job-adapter-"));
   const cleanupRoot = tempCleanupRoot(tempRoot);
   const readyFile = join(tempRoot, "ready.json");
   try {
-    const adapter = new WindowsJobProcessAdapter();
+    const adapter = createPlatformProcessAdapter();
     const handle = await adapter.start({
       runId: randomUUID(),
       executable: process.execPath,
@@ -219,6 +230,7 @@ test("WindowsJobProcessAdapter reports natural exit after both streams end", {
     logs.capture(handle.stdout, handle.stderr);
     const ready = await waitForFile(readyFile);
     assert.equal(ready.pid, handle.pid);
+    assert.equal(handle.gracefulStop.supported, process.platform !== "win32");
 
     assert.deepEqual(await adapter.waitForExit(handle, 5_000), {
       kind: "exited",
@@ -231,5 +243,42 @@ test("WindowsJobProcessAdapter reports natural exit after both streams end", {
     assert.ok(logs.replay().events.some(({ text }) => text === "natural stderr: expected failure"));
   } finally {
     await rm(cleanupRoot, { recursive: true, force: true });
+  }
+});
+
+test("POSIX adapter escalates an uncooperative process group from SIGTERM to SIGKILL", {
+  skip: process.platform === "darwin" || process.platform === "linux" ? false : "POSIX-only test",
+  timeout: 15_000,
+}, async () => {
+  const adapter = createPlatformProcessAdapter();
+  let handle;
+  let events;
+  try {
+    handle = await adapter.start({
+      runId: randomUUID(),
+      executable: process.execPath,
+      args: [posixStubbornTree],
+      canonicalCwd: dirname(posixStubbornTree),
+      env: process.env,
+    });
+    assert.deepEqual(handle.gracefulStop, { supported: true });
+    events = eventReader(handle.stdout);
+    const ready = await events.next("stubborn-listening");
+    const url = `http://127.0.0.1:${ready.port}/ready`;
+    assert.equal((await fetch(url)).status, 200);
+    assert.equal(await adapter.requestGracefulStop(handle), "requested");
+    assert.deepEqual(await adapter.waitForExit(handle, 150), { kind: "timeout" });
+    assert.equal((await fetch(url)).status, 200);
+    assert.equal(await adapter.terminateOwnedTree(handle), "requested");
+    const result = await adapter.waitForExit(handle, 5_000);
+    assert.equal(result.kind, "exited");
+    assert.equal(result.signal, "SIGKILL");
+    await waitForEndpointToClose(url);
+  } finally {
+    if (handle !== undefined) {
+      await adapter.terminateOwnedTree(handle);
+      await adapter.waitForExit(handle, 2_000);
+    }
+    events?.close();
   }
 });

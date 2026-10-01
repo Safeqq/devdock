@@ -4,6 +4,15 @@
   "private": true,
   "type": "module",
   "description": "Local dashboard for developer services",
+  "bin": {
+    "devdock": "bin/devdock.mjs"
+  },
+  "files": [
+    "bin"
+  ],
+  "bundleDependencies": [
+    "@devdock/daemon"
+  ],
   "packageManager": "npm@11.19.0",
   "engines": {
     "node": "24.21.0",
@@ -21,11 +30,15 @@
     "test:integration": "npm run build && node scripts/run-tests.mjs integration",
     "test:browser": "npm run build && node scripts/run-tests.mjs browser",
     "build": "npm run build -w @devdock/contracts && npm run build -w @devdock/platform && npm run build -w @devdock/storage && npm run build -w @devdock/web && npm run build -w @devdock/daemon",
+    "package:local": "npm run build && npm pack --pack-destination artifacts",
     "fixture:http": "node tests/fixtures/http-server.mjs",
     "fixture:tree": "node tests/fixtures/tree-parent.mjs",
     "fixture:control": "npm run build && node apps/daemon/dist/cli.js",
     "api:auth": "npm run build && node apps/daemon/dist/api-cli.js",
     "api:registry": "npm run build && node apps/daemon/dist/registry-api-cli.js"
+  },
+  "dependencies": {
+    "@devdock/daemon": "0.0.0"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",

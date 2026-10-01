@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -69,6 +69,19 @@ test("project registry persists selections without running scripts during discov
     const project = await registry.registerProject(projectPath);
     const duplicate = await registry.registerProject(join(projectPath, "."));
     assert.equal(duplicate.id, project.id);
+    const projectAlias = join(tempRoot, "project-alias");
+    await symlink(projectPath, projectAlias, process.platform === "win32" ? "junction" : "dir");
+    const aliased = await registry.registerProject(projectAlias);
+    assert.equal(aliased.id, project.id);
+    const escapingDirectory = join(projectPath, "outside-link");
+    await symlink(
+      outsidePath,
+      escapingDirectory,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    await assert.rejects(registry.discoverScripts(project.id, "outside-link"), {
+      code: "CWD_OUTSIDE_PROJECT",
+    });
     assert.equal(registry.listProjects().length, 1);
 
     const discovered = await registry.discoverScripts(project.id);
@@ -115,6 +128,20 @@ test("project registry persists selections without running scripts during discov
     assert.equal(plan.args.at(-1), "mark:ready");
     assert.equal(plan.canonicalCwd, project.path.canonicalPath);
     assert.equal(plan.env.PROJECT_TOKEN, "loaded-from-env-file");
+    const casingPlan = launcher.plan(
+      "mark:ready",
+      project.path.canonicalPath,
+      process.platform === "win32"
+        ? { Path: "C:\\portable-path", PATH: "C:\\wrong-case" }
+        : { PATH: "/portable-path", Path: "/wrong-case" },
+    );
+    if (process.platform === "win32") {
+      assert.equal(casingPlan.env.Path.endsWith(";C:\\portable-path"), true);
+      assert.equal(Object.hasOwn(casingPlan.env, "PATH"), false);
+    } else {
+      assert.equal(casingPlan.env.PATH.endsWith(":/portable-path"), true);
+      assert.equal(Object.hasOwn(casingPlan.env, "Path"), false);
+    }
     assert.equal(
       launcher.plan("mark:ready", plan.canonicalCwd, {
         PATH: process.env.PATH,

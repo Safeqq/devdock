@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  fixture-lifecycle:
-    name: Fixture lifecycle (${{ matrix.os }})
+  platform-contract:
+    name: Platform contract (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
@@ -33,3 +33,4 @@ jobs:
       - run: npm run lint
       - run: npm run test:unit
       - run: npm run test:integration
+      - run: npm run test:browser

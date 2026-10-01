@@ -80,9 +80,18 @@ export async function inspectEnvironmentFiles(
 ): Promise<EnvironmentInspection> {
   const files: InspectedEnvironmentFile[] = [];
   const values: Record<string, string> = {};
+  let inspectionRoot: string;
+  try {
+    inspectionRoot = await realpath(canonicalCwd);
+  } catch {
+    return {
+      files: references.map((reference) => ({ path: reference, status: "unreadable" })),
+      values,
+    };
+  }
 
   for (const reference of references) {
-    const target = lexicalTarget(canonicalCwd, reference);
+    const target = lexicalTarget(inspectionRoot, reference);
     if (target === null) {
       files.push({ path: reference, status: "outside_cwd" });
       continue;
@@ -95,7 +104,7 @@ export async function inspectEnvironmentFiles(
       files.push({ path: reference, status: missing(error) ? "missing" : "unreadable" });
       continue;
     }
-    if (!inside(canonicalCwd, canonicalTarget)) {
+    if (!inside(inspectionRoot, canonicalTarget)) {
       files.push({ path: reference, status: "outside_cwd" });
       continue;
     }

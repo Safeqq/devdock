@@ -2,8 +2,13 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { isAbsolute, join } from "node:path";
 import { createInterface, type Interface as ReadLineInterface } from "node:readline";
-import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
+import {
+  appendBoundedOutput,
+  type BoundedOutputSink,
+  createBoundedOutputSink,
+  endBoundedOutput,
+} from "./bounded-output.js";
 import type {
   ManagedProcessHandle,
   OwnershipInspection,
@@ -14,7 +19,6 @@ import type {
 } from "./process-adapter.js";
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 10_000;
-const STREAM_HIGH_WATER_MARK = 64 * 1_024;
 const MAX_PROTOCOL_LINE_LENGTH = 16 * 1_024;
 const helperAsset = fileURLToPath(new URL("../assets/windows-job-helper.ps1", import.meta.url));
 
@@ -25,17 +29,11 @@ export interface WindowsJobProcessAdapterOptions {
   readonly helperEnvironment?: NodeJS.ProcessEnv;
 }
 
-interface BoundedSink {
-  readonly stream: PassThrough;
-  saturated: boolean;
-  droppedBytes: number;
-}
-
 interface OwnedJob {
   readonly helper: ChildProcessWithoutNullStreams;
   readonly protocol: ReadLineInterface;
-  readonly stdout: BoundedSink;
-  readonly stderr: BoundedSink;
+  readonly stdout: BoundedOutputSink;
+  readonly stderr: BoundedOutputSink;
   readonly ownership: object;
   readonly terminalPromise: Promise<WaitForExitResult>;
   readonly resolveTerminal: (result: WaitForExitResult) => void;
@@ -45,31 +43,6 @@ interface OwnedJob {
   terminal?: WaitForExitResult;
   helperError: string;
   stopRequested: boolean;
-}
-
-function boundedSink(): BoundedSink {
-  return {
-    stream: new PassThrough({ highWaterMark: STREAM_HIGH_WATER_MARK }),
-    saturated: false,
-    droppedBytes: 0,
-  };
-}
-
-function appendBounded(sink: BoundedSink, chunk: Buffer): void {
-  if (sink.saturated) {
-    sink.droppedBytes += chunk.byteLength;
-    return;
-  }
-  if (sink.stream.write(chunk)) return;
-  sink.saturated = true;
-  sink.stream.once("drain", () => {
-    sink.saturated = false;
-    const dropped = sink.droppedBytes;
-    sink.droppedBytes = 0;
-    if (dropped > 0) {
-      appendBounded(sink, Buffer.from(`[DevDock adapter dropped ${dropped} log bytes]\n`));
-    }
-  });
 }
 
 function terminalResult(code: number): WaitForExitResult {
@@ -122,8 +95,8 @@ export class WindowsJobProcessAdapter implements ProcessAdapter {
         stdio: ["pipe", "pipe", "pipe"],
       },
     );
-    const stdout = boundedSink();
-    const stderr = boundedSink();
+    const stdout = createBoundedOutputSink("adapter");
+    const stderr = createBoundedOutputSink("adapter");
     let resolveTerminal!: (result: WaitForExitResult) => void;
     const terminalPromise = new Promise<WaitForExitResult>((resolve) => {
       resolveTerminal = resolve;
@@ -314,7 +287,7 @@ export class WindowsJobProcessAdapter implements ProcessAdapter {
         this.#protocolFailure(owned, "Windows job helper emitted an invalid output event");
         return;
       }
-      appendBounded(owned[event.stream], Buffer.from(event.data, "base64"));
+      appendBoundedOutput(owned[event.stream], Buffer.from(event.data, "base64"));
       return;
     }
     if (event.type === "job-output-gap") {
@@ -322,7 +295,7 @@ export class WindowsJobProcessAdapter implements ProcessAdapter {
         this.#protocolFailure(owned, "Windows job helper emitted an invalid output gap");
         return;
       }
-      appendBounded(
+      appendBoundedOutput(
         owned.stderr,
         Buffer.from(`[DevDock helper dropped ${Number(event.droppedBytes)} log bytes]\n`),
       );
@@ -347,15 +320,15 @@ export class WindowsJobProcessAdapter implements ProcessAdapter {
 
   #markUnknown(owned: OwnedJob, reason: string): void {
     if (owned.terminal !== undefined) return;
-    appendBounded(owned.stderr, Buffer.from(`[DevDock helper error] ${reason}\n`));
+    appendBoundedOutput(owned.stderr, Buffer.from(`[DevDock helper error] ${reason}\n`));
     this.#markTerminal(owned, { kind: "unknown", reason });
   }
 
   #markTerminal(owned: OwnedJob, result: WaitForExitResult): void {
     if (owned.terminal !== undefined) return;
     owned.terminal = result;
-    owned.stdout.stream.end();
-    owned.stderr.stream.end();
+    endBoundedOutput(owned.stdout);
+    endBoundedOutput(owned.stderr);
     owned.resolveTerminal(result);
   }
 

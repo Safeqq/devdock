@@ -10,7 +10,11 @@ import { chromium } from "playwright-core";
 import { createLocalApiServer } from "../../apps/daemon/dist/local-api.js";
 import { ProjectRegistry } from "../../apps/daemon/dist/project-registry.js";
 import { ServiceRuntimeManager } from "../../apps/daemon/dist/service-runtime-manager.js";
-import { NpmLauncher, WindowsJobProcessAdapter } from "../../packages/platform/dist/index.js";
+import {
+  createPlatformProcessAdapter,
+  NpmLauncher,
+  productionProcessControlAvailable,
+} from "../../packages/platform/dist/index.js";
 import { RegistryDatabase } from "../../packages/storage/dist/index.js";
 
 const httpFixture = fileURLToPath(new URL("../fixtures/http-server.mjs", import.meta.url));
@@ -188,7 +192,9 @@ test("browser pairs and manages project configuration without executing a script
 });
 
 test("browser starts, follows logs, survives tab close, and stops an npm service", {
-  skip: process.platform !== "win32" ? "Requires native Windows Job Objects" : false,
+  skip: !productionProcessControlAvailable()
+    ? "No production process adapter for this platform"
+    : false,
   timeout: 45_000,
 }, async () => {
   const tempRoot = await mkdtemp(join(tmpdir(), "devdock-browser-lifecycle-"));
@@ -222,7 +228,7 @@ test("browser starts, follows logs, survives tab close, and stops an npm service
     const runtime = new ServiceRuntimeManager({
       registry,
       launcher,
-      adapterFactory: () => new WindowsJobProcessAdapter(),
+      adapterFactory: () => createPlatformProcessAdapter(),
       daemonSessionId: "browser-lifecycle-test",
     });
     api = createLocalApiServer({

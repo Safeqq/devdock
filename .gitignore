@@ -2,6 +2,8 @@ node_modules/
 .tools/
 dist/
 coverage/
+artifacts/*
+!artifacts/.gitkeep
 .env
 .env.*
 !.env.example

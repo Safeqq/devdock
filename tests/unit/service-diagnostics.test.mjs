@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -30,8 +30,10 @@ test("environment files are parsed as data in configured precedence order", asyn
     );
     await writeFile(join(serviceRoot, ".env.local"), "API_TOKEN=last-secret\n", "utf8");
     await writeFile(join(serviceRoot, ".env.invalid"), Buffer.from([0xff, 0xfe, 0xfd]));
+    const serviceAlias = join(tempRoot, "service-alias");
+    await symlink(serviceRoot, serviceAlias, process.platform === "win32" ? "junction" : "dir");
 
-    const inspected = await inspectEnvironmentFiles(serviceRoot, [
+    const inspected = await inspectEnvironmentFiles(serviceAlias, [
       ".env",
       ".env.local",
       ".env.missing",

@@ -122,12 +122,15 @@ export class NpmLauncher {
       const value = sourceEnv[key];
       if (value !== undefined) setEnvironmentValue(env, key, value);
     }
-    const sourcePath = sourceEnv.Path ?? sourceEnv.PATH ?? "";
-    setEnvironmentValue(env, process.platform === "win32" ? "Path" : "PATH", sourcePath);
+    const pathKey = process.platform === "win32" ? "Path" : "PATH";
+    const sourcePath =
+      process.platform === "win32"
+        ? (Object.entries(sourceEnv).find(([key]) => key.toLowerCase() === "path")?.[1] ?? "")
+        : (sourceEnv.PATH ?? "");
+    setEnvironmentValue(env, pathKey, sourcePath);
     for (const [key, value] of Object.entries(projectEnv)) {
       setEnvironmentValue(env, key, value);
     }
-    const pathKey = process.platform === "win32" ? "Path" : "PATH";
     const launchPath = [dirname(this.#nodeExecutable), environmentValue(env, pathKey)]
       .filter((part) => part !== "")
       .join(delimiter);

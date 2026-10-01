@@ -9,7 +9,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createLocalApiServer } from "../../apps/daemon/dist/local-api.js";
 import { ProjectRegistry } from "../../apps/daemon/dist/project-registry.js";
 import { ServiceRuntimeManager } from "../../apps/daemon/dist/service-runtime-manager.js";
-import { NpmLauncher, WindowsJobProcessAdapter } from "../../packages/platform/dist/index.js";
+import {
+  createPlatformProcessAdapter,
+  NpmLauncher,
+  productionProcessControlAvailable,
+} from "../../packages/platform/dist/index.js";
 import { RegistryDatabase } from "../../packages/storage/dist/index.js";
 
 const httpFixture = fileURLToPath(new URL("../fixtures/http-server.mjs", import.meta.url));
@@ -131,7 +135,9 @@ function cleanupRoot(path) {
 }
 
 test("authenticated service lifecycle API starts, streams, inspects, and stops an npm tree", {
-  skip: process.platform !== "win32" ? "Requires native Windows Job Objects" : false,
+  skip: !productionProcessControlAvailable()
+    ? "No production process adapter for this platform"
+    : false,
   timeout: 30_000,
 }, async () => {
   const tempRoot = await mkdtemp(join(tmpdir(), "devdock-lifecycle-api-"));
@@ -175,7 +181,7 @@ test("authenticated service lifecycle API starts, streams, inspects, and stops a
     const runtime = new ServiceRuntimeManager({
       registry,
       launcher,
-      adapterFactory: () => new WindowsJobProcessAdapter(),
+      adapterFactory: () => createPlatformProcessAdapter(),
       daemonSessionId: "lifecycle-api-test",
     });
     api = createLocalApiServer({ registry, launcher, runtime });

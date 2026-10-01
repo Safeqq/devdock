@@ -4,6 +4,11 @@ export {
 } from "./cooperative-fixture-adapter.js";
 export * from "./data-directory.js";
 export { NpmLauncher, NpmLauncherError } from "./npm-launcher.js";
+export {
+  createPlatformProcessAdapter,
+  productionProcessControlAvailable,
+} from "./platform-process-adapter.js";
+export { PosixProcessGroupAdapter } from "./posix-process-group-adapter.js";
 export type {
   GracefulStopCapability,
   ManagedProcessHandle,

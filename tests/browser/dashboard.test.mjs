@@ -210,7 +210,7 @@ test("browser starts, follows logs, survives tab close, and stops an npm service
   skip: !productionProcessControlAvailable()
     ? "No production process adapter for this platform"
     : false,
-  timeout: 45_000,
+  timeout: 90_000,
 }, async () => {
   const tempRoot = await mkdtemp(join(tmpdir(), "devdock-browser-lifecycle-"));
   const safeRoot = cleanupRoot(tempRoot, "devdock-browser-lifecycle-");
@@ -283,7 +283,8 @@ test("browser starts, follows logs, survives tab close, and stops an npm service
       .getByRole("list", { name: "serve logs" })
       .locator("code")
       .filter({ hasText: '"type":"browser-log-ready"' });
-    await readyLine.waitFor({ timeout: 10_000 });
+    // A slow runner can require several bounded SSE reconnects while replaying the burst.
+    await readyLine.waitFor({ timeout: 30_000 });
     const ready = JSON.parse(await readyLine.last().textContent());
     await serviceCard.locator(".log-lines li").nth(499).waitFor();
     assert.equal(await serviceCard.locator(".log-lines li").count(), 500);

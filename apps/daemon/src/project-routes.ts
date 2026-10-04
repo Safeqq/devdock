@@ -3,6 +3,7 @@ import {
   ProfileRuntimeStatusResponseSchema,
   ProfileStartResponseSchema,
   ProfileStopResponseSchema,
+  ProjectConfigurationExportSchema,
   RegisterProjectRequestSchema,
   RegistryIdSchema,
   SelectServiceRequestSchema,
@@ -63,6 +64,17 @@ export function registerProjectRoutes(
       services: registry.listServices(id),
       profiles: registry.listProfiles(id),
     };
+  });
+
+  app.get("/api/projects/:id/export", async (request, reply) => {
+    const id = idFrom(request.params);
+    if (id === null) return invalid(reply);
+    const configuration = ProjectConfigurationExportSchema.parse(
+      registry.exportProjectConfiguration(id),
+    );
+    return reply
+      .header("content-disposition", 'attachment; filename="devdock-configuration.json"')
+      .send(configuration);
   });
 
   app.post("/api/projects/:id/archive", async (request, reply) => {

@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { basename } from "node:path";
+import { basename, relative, sep } from "node:path";
 import {
   NpmScriptNameSchema,
   type ProfileConfig,
   ProfileConfigSchema,
   type ProfileService,
+  type ProjectConfigurationExport,
+  ProjectConfigurationExportSchema,
   type ProjectRecord,
   type ReadinessProbe,
   type RestartPolicy,
@@ -123,6 +125,50 @@ export class ProjectRegistry {
       throw new ProjectRegistryError("PROFILE_NOT_FOUND", "Profile does not exist");
     }
     return profile;
+  }
+
+  exportProjectConfiguration(projectId: string): ProjectConfigurationExport {
+    const project = this.getProject(projectId);
+    const services = this.#store.listServices(projectId);
+    const serviceReferences = new Map(
+      services.map((service, index) => [service.id, `service-${index + 1}`]),
+    );
+    const referenceFor = (serviceId: string): string => {
+      const reference = serviceReferences.get(serviceId);
+      if (reference === undefined) {
+        throw new ProjectRegistryError(
+          "PROFILE_SERVICE_INVALID",
+          "Profile references a service that is unavailable for export",
+        );
+      }
+      return reference;
+    };
+    return ProjectConfigurationExportSchema.parse({
+      format: "devdock.project-configuration",
+      schemaVersion: 1,
+      project: { displayName: project.displayName },
+      services: services.map((service) => {
+        const relativeCwd = relative(project.path.canonicalPath, service.cwd.canonicalPath);
+        return {
+          serviceRef: referenceFor(service.id),
+          displayName: service.displayName,
+          scriptName: service.scriptName,
+          cwd: relativeCwd === "" ? [] : relativeCwd.split(sep),
+          ...(service.expectedPort === undefined ? {} : { expectedPort: service.expectedPort }),
+          ...(service.readiness === undefined ? {} : { readiness: service.readiness }),
+          restartPolicy: service.restartPolicy,
+          envFiles: service.envFiles,
+          requiredEnvKeys: service.requiredEnvKeys,
+        };
+      }),
+      profiles: this.#store.listProfiles(projectId).map((profile) => ({
+        displayName: profile.displayName,
+        services: profile.services.map((service) => ({
+          serviceRef: referenceFor(service.serviceId),
+          dependsOn: service.dependsOn.map(referenceFor),
+        })),
+      })),
+    });
   }
 
   async createProfile(

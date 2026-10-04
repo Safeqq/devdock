@@ -47,6 +47,11 @@ test("authenticated project API persists selections and only previews npm execut
       join(projectPath, "marker.mjs"),
       "import { writeFileSync } from 'node:fs'; writeFileSync(new URL('./marker.out', import.meta.url), 'ran');",
     );
+    await writeFile(
+      join(projectPath, ".env.export"),
+      "API_TOKEN=export-secret-must-not-leak\n",
+      "utf8",
+    );
     store = await RegistryDatabase.open(join(tempRoot, "data", "registry.sqlite"));
     api = createLocalApiServer({
       registry: new ProjectRegistry(store),
@@ -148,6 +153,15 @@ test("authenticated project API persists selections and only previews npm execut
         scriptName: "dev",
         displayName: "Dev server",
         expectedPort: 4_300,
+        readiness: { kind: "http", path: "/ready", timeoutMs: 5_000 },
+        restartPolicy: {
+          kind: "on_failure",
+          maxAttempts: 2,
+          initialBackoffMs: 250,
+          maxBackoffMs: 1_000,
+        },
+        envFiles: [".env.export"],
+        requiredEnvKeys: ["API_TOKEN"],
       }),
     );
     assert.equal(selected.status, 201);
@@ -188,6 +202,56 @@ test("authenticated project API persists selections and only previews npm execut
     assert.equal(profileResponse.status, 201);
     const { profile } = await profileResponse.json();
     assert.equal(profile.displayName, "Backend Only");
+    assert.equal((await call(origin, `/api/projects/${project.id}/export`)).status, 401);
+    const exportedResponse = await call(origin, `/api/projects/${project.id}/export`, {
+      headers: { cookie },
+    });
+    assert.equal(exportedResponse.status, 200);
+    assert.equal(
+      exportedResponse.headers.get("content-disposition"),
+      'attachment; filename="devdock-configuration.json"',
+    );
+    const exportedText = await exportedResponse.text();
+    assert.equal(exportedText.includes("export-secret-must-not-leak"), false);
+    assert.equal(exportedText.includes(projectPath), false);
+    assert.deepEqual(JSON.parse(exportedText), {
+      format: "devdock.project-configuration",
+      schemaVersion: 1,
+      project: { displayName: project.displayName },
+      services: [
+        {
+          serviceRef: "service-1",
+          displayName: "Dev server",
+          scriptName: "dev",
+          cwd: [],
+          expectedPort: 4_300,
+          readiness: { kind: "http", path: "/ready", timeoutMs: 5_000 },
+          restartPolicy: {
+            kind: "on_failure",
+            maxAttempts: 2,
+            initialBackoffMs: 250,
+            maxBackoffMs: 1_000,
+          },
+          envFiles: [".env.export"],
+          requiredEnvKeys: ["API_TOKEN"],
+        },
+        {
+          serviceRef: "service-2",
+          displayName: "Worker",
+          scriptName: "dev",
+          cwd: [],
+          restartPolicy: { kind: "off" },
+          envFiles: [],
+          requiredEnvKeys: [],
+        },
+      ],
+      profiles: [
+        {
+          displayName: "Backend Only",
+          services: [{ serviceRef: "service-1", dependsOn: [] }],
+        },
+      ],
+    });
     assert.equal(
       (await call(origin, `/api/profiles/${profile.id}/status`, { headers: { cookie } })).status,
       501,

@@ -528,14 +528,23 @@ function Dashboard({
                 <h2>{detail.project.displayName}</h2>
                 <p className="path">{detail.project.path.displayPath}</p>
               </div>
-              <button
-                className="quiet danger"
-                type="button"
-                disabled={busy}
-                onClick={() => void archiveProject()}
-              >
-                Archive
-              </button>
+              <div className="project-actions">
+                <a
+                  className="button-link"
+                  href={`/api/projects/${detail.project.id}/export`}
+                  download="devdock-configuration.json"
+                >
+                  Export configuration
+                </a>
+                <button
+                  className="quiet danger"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void archiveProject()}
+                >
+                  Archive
+                </button>
+              </div>
             </section>
 
             <section className="panel">

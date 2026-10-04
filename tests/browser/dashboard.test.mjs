@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -166,6 +166,21 @@ test("browser pairs and manages project configuration without executing a script
       (await diagnostics.textContent()).includes("browser-secret-must-not-render"),
       false,
     );
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      page.getByRole("link", { name: "Export configuration" }).click(),
+    ]);
+    assert.equal(download.suggestedFilename(), "devdock-configuration.json");
+    const downloadedPath = await download.path();
+    assert.ok(downloadedPath);
+    const exportedText = await readFile(downloadedPath, "utf8");
+    assert.equal(exportedText.includes("browser-secret-must-not-render"), false);
+    assert.equal(exportedText.includes(projectPath), false);
+    const exported = JSON.parse(exportedText);
+    assert.equal(exported.format, "devdock.project-configuration");
+    assert.deepEqual(exported.services[0].envFiles, [".env.browser"]);
+    assert.deepEqual(exported.services[0].requiredEnvKeys, ["BROWSER_TOKEN"]);
+    assert.deepEqual(exported.profiles[0].services, [{ serviceRef: "service-1", dependsOn: [] }]);
     await page.getByRole("button", { name: "View command" }).click();
     await page.locator(".preview pre").getByText(/"cwd"/u).waitFor();
     await page.getByRole("button", { name: "Prepare Open App" }).click();

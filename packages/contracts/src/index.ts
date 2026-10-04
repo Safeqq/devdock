@@ -172,6 +172,97 @@ export const ProfileConfigSchema = z.strictObject({
 });
 export type ProfileConfig = z.infer<typeof ProfileConfigSchema>;
 
+const RelativePathSegmentSchema = z
+  .string()
+  .min(1)
+  .max(1_024)
+  .refine((segment) => segment !== "." && segment !== "..", "Path segments must be relative")
+  .refine(
+    (segment) =>
+      [...segment].every((character) => {
+        const codePoint = character.codePointAt(0);
+        return codePoint !== undefined && codePoint > 31 && codePoint !== 127;
+      }),
+    "Path segments cannot contain control characters",
+  );
+
+const ProjectConfigurationServiceSchema = z
+  .strictObject({
+    serviceRef: identifier,
+    displayName: z.string().trim().min(1).max(128),
+    scriptName: NpmScriptNameSchema,
+    cwd: z.array(RelativePathSegmentSchema).max(128),
+    expectedPort: z.number().int().min(1).max(65_535).optional(),
+    readiness: ReadinessProbeSchema.optional(),
+    restartPolicy: RestartPolicySchema,
+    envFiles: EnvironmentFileReferencesSchema,
+    requiredEnvKeys: RequiredEnvironmentKeysSchema,
+  })
+  .refine((service) => service.readiness === undefined || service.expectedPort !== undefined, {
+    message: "expectedPort is required when readiness is exported",
+    path: ["expectedPort"],
+  });
+
+const ProjectConfigurationProfileServiceSchema = z.strictObject({
+  serviceRef: identifier,
+  dependsOn: z.array(identifier).max(32).refine(uniqueStrings, "Dependencies must be unique"),
+});
+
+const ProjectConfigurationProfileSchema = z.strictObject({
+  displayName: z.string().trim().min(1).max(128),
+  services: z.array(ProjectConfigurationProfileServiceSchema).min(1).max(32),
+});
+
+export const ProjectConfigurationExportSchema = z
+  .strictObject({
+    format: z.literal("devdock.project-configuration"),
+    schemaVersion: z.literal(1),
+    project: z.strictObject({ displayName: z.string().trim().min(1).max(128) }),
+    services: z.array(ProjectConfigurationServiceSchema),
+    profiles: z.array(ProjectConfigurationProfileSchema),
+  })
+  .superRefine((configuration, context) => {
+    const serviceRefs = configuration.services.map((service) => service.serviceRef);
+    if (!uniqueStrings(serviceRefs)) {
+      context.addIssue({
+        code: "custom",
+        message: "Exported service references must be unique",
+        path: ["services"],
+      });
+    }
+    const available = new Set(serviceRefs);
+    for (const [profileIndex, profile] of configuration.profiles.entries()) {
+      const members = profile.services.map((service) => service.serviceRef);
+      if (!uniqueStrings(members)) {
+        context.addIssue({
+          code: "custom",
+          message: "Exported profile services must be unique",
+          path: ["profiles", profileIndex, "services"],
+        });
+      }
+      const memberSet = new Set(members);
+      for (const [serviceIndex, service] of profile.services.entries()) {
+        if (!available.has(service.serviceRef)) {
+          context.addIssue({
+            code: "custom",
+            message: "Exported profile service must reference an exported service",
+            path: ["profiles", profileIndex, "services", serviceIndex, "serviceRef"],
+          });
+        }
+        for (const dependency of service.dependsOn) {
+          if (!memberSet.has(dependency) || dependency === service.serviceRef) {
+            context.addIssue({
+              code: "custom",
+              message: "Exported dependencies must reference another profile member",
+              path: ["profiles", profileIndex, "services", serviceIndex, "dependsOn"],
+            });
+          }
+        }
+      }
+    }
+  });
+export type ProjectConfigurationExport = z.infer<typeof ProjectConfigurationExportSchema>;
+
 export const RunSnapshotSchema = z.strictObject({
   runId: identifier,
   serviceId: identifier,

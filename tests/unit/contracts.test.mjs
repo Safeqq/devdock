@@ -4,6 +4,7 @@ import { test } from "node:test";
 
 import {
   CreateProfileRequestSchema,
+  ProjectConfigurationExportSchema,
   RunSnapshotSchema,
   SelectServiceRequestSchema,
   ServiceConfigSchema,
@@ -136,6 +137,63 @@ test("service input rejects fields outside its runtime contract", () => {
     command: "arbitrary shell text",
   });
   assert.equal(result.success, false);
+});
+
+test("configuration export is strict and keeps profile references internal", () => {
+  const configuration = {
+    format: "devdock.project-configuration",
+    schemaVersion: 1,
+    project: { displayName: "Demo" },
+    services: [
+      {
+        serviceRef: "service-1",
+        displayName: "API",
+        scriptName: "dev",
+        cwd: ["apps", "api"],
+        restartPolicy: { kind: "off" },
+        envFiles: [".env.local"],
+        requiredEnvKeys: ["API_TOKEN"],
+      },
+    ],
+    profiles: [
+      {
+        displayName: "Backend",
+        services: [{ serviceRef: "service-1", dependsOn: [] }],
+      },
+    ],
+  };
+  assert.equal(ProjectConfigurationExportSchema.safeParse(configuration).success, true);
+  assert.equal(
+    ProjectConfigurationExportSchema.safeParse({
+      ...configuration,
+      secretValues: { API_TOKEN: "must-not-export" },
+    }).success,
+    false,
+  );
+  assert.equal(
+    ProjectConfigurationExportSchema.safeParse({
+      ...configuration,
+      profiles: [
+        {
+          displayName: "Broken",
+          services: [{ serviceRef: "missing", dependsOn: [] }],
+        },
+      ],
+    }).success,
+    false,
+  );
+  assert.equal(
+    ProjectConfigurationExportSchema.safeParse({
+      ...configuration,
+      services: [
+        {
+          ...configuration.services[0],
+          readiness: { kind: "http", path: "/ready", timeoutMs: 1_000 },
+        },
+      ],
+    }).success,
+    false,
+  );
 });
 
 test("profile input requires unique members and internal dependency references", () => {

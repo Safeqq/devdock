@@ -30,7 +30,13 @@ function waitForExit(child, timeoutMs) {
   });
 }
 
-function runNode(args, options, timeoutMs = 120_000, expectedCode = 0) {
+function runNode(
+  args,
+  options,
+  timeoutMs = 120_000,
+  expectedCode = 0,
+  outputLimitBytes = 64 * 1_024,
+) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, args, {
       ...options,
@@ -45,10 +51,10 @@ function runNode(args, options, timeoutMs = 120_000, expectedCode = 0) {
       reject(new Error(`Command timed out: ${stderr.slice(-4_096)}`));
     }, timeoutMs);
     child.stdout.on("data", (chunk) => {
-      stdout = (stdout + chunk.toString("utf8")).slice(-64 * 1_024);
+      stdout = (stdout + chunk.toString("utf8")).slice(-outputLimitBytes);
     });
     child.stderr.on("data", (chunk) => {
-      stderr = (stderr + chunk.toString("utf8")).slice(-64 * 1_024);
+      stderr = (stderr + chunk.toString("utf8")).slice(-outputLimitBytes);
     });
     child.once("error", (error) => {
       clearTimeout(timer);
@@ -128,11 +134,55 @@ test("packed CLI runs from a clean local install and closes through the native O
     );
     const launcher = await NpmLauncher.locate();
     const npmCli = launcher.plan("package:test", repositoryRoot).args[0];
-    await runNode(
-      [npmCli, "pack", "--ignore-scripts", "--pack-destination", packageDirectory, repositoryRoot],
+    const packResult = await runNode(
+      [
+        npmCli,
+        "pack",
+        "--ignore-scripts",
+        "--json",
+        "--pack-destination",
+        packageDirectory,
+        repositoryRoot,
+      ],
       { cwd: repositoryRoot },
+      120_000,
+      0,
+      512 * 1_024,
     );
-    const tarball = join(packageDirectory, "devdock-0.0.0.tgz");
+    const packReports = JSON.parse(packResult.stdout);
+    assert.equal(Array.isArray(packReports), true);
+    assert.equal(packReports.length, 1);
+    const [packReport] = packReports;
+    assert.equal(packReport.name, "devdock");
+    assert.equal(packReport.version, "0.0.0");
+    assert.equal(packReport.filename, "devdock-0.0.0.tgz");
+    assert.equal(Array.isArray(packReport.files), true);
+    assert.equal(packReport.entryCount, packReport.files.length);
+    const packedPaths = packReport.files.map((file) => file.path);
+    for (const requiredPath of ["README.md", "bin/devdock.mjs", "package.json"]) {
+      assert.equal(packedPaths.includes(requiredPath), true, `Package is missing ${requiredPath}`);
+    }
+    const forbiddenRootPath =
+      /^(?:AGENT\.md|package-lock\.json|tsconfig\.json|biome\.json|\.env(?:\.|$)|\.(?:github|tools)\/|(?:apps|artifacts|docs|packages|scripts|tests)\/)/;
+    assert.deepEqual(
+      packedPaths.filter((path) => forbiddenRootPath.test(path)),
+      [],
+    );
+    assert.equal(
+      packedPaths.some((path) => /^node_modules\/@devdock\/[^/]+\/(?:src|tests)\//.test(path)),
+      false,
+    );
+    for (const bundledWorkspace of [
+      "@devdock/contracts",
+      "@devdock/daemon",
+      "@devdock/platform",
+      "@devdock/storage",
+      "@devdock/web",
+    ]) {
+      assert.equal(packReport.bundled.includes(bundledWorkspace), true);
+    }
+
+    const tarball = join(packageDirectory, packReport.filename);
     await access(tarball);
     await runNode(
       [

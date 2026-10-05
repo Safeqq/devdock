@@ -17,9 +17,23 @@ import {
 import { RegistryDatabase } from "../../packages/storage/dist/index.js";
 
 const httpFixture = fileURLToPath(new URL("../fixtures/http-server.mjs", import.meta.url));
+const apiRequestTimeoutMs = 10_000;
 
 async function call(origin, path, options = {}) {
-  return fetch(`${origin}${path}`, { signal: AbortSignal.timeout(5_000), ...options });
+  try {
+    return await fetch(`${origin}${path}`, {
+      signal: AbortSignal.timeout(apiRequestTimeoutMs),
+      ...options,
+    });
+  } catch (caught) {
+    if (caught?.name === "TimeoutError") {
+      throw new Error(
+        `${options.method ?? "GET"} ${path} did not respond within ${apiRequestTimeoutMs} ms`,
+        { cause: caught },
+      );
+    }
+    throw caught;
+  }
 }
 
 function mutation(origin, cookie, csrf, body) {

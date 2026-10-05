@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { access, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -29,7 +30,7 @@ function waitForExit(child, timeoutMs) {
   });
 }
 
-function runNode(args, options, timeoutMs = 120_000) {
+function runNode(args, options, timeoutMs = 120_000, expectedCode = 0) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, args, {
       ...options,
@@ -55,7 +56,7 @@ function runNode(args, options, timeoutMs = 120_000) {
     });
     child.once("close", (code) => {
       clearTimeout(timer);
-      if (code === 0) resolve({ stdout, stderr });
+      if (code === expectedCode) resolve({ stdout, stderr });
       else reject(new Error(`Command exited with code ${code}: ${stderr.slice(-4_096)}`));
     });
   });
@@ -113,6 +114,18 @@ test("packed CLI runs from a clean local install and closes through the native O
   let lines;
   try {
     await Promise.all([mkdir(packageDirectory), mkdir(installDirectory), mkdir(userDataRoot)]);
+    await writeFile(
+      join(installDirectory, "package.json"),
+      `${JSON.stringify(
+        {
+          name: "devdock-package-smoke",
+          private: true,
+          scripts: { "devdock:version": "devdock --version" },
+        },
+        null,
+        2,
+      )}\n`,
+    );
     const launcher = await NpmLauncher.locate();
     const npmCli = launcher.plan("package:test", repositoryRoot).args[0];
     await runNode(
@@ -137,14 +150,61 @@ test("packed CLI runs from a clean local install and closes through the native O
 
     const entry = join(installDirectory, "node_modules", "devdock", "bin", "devdock.mjs");
     await access(entry);
-    child = spawn(process.execPath, [entry], {
+    const binDirectory = join(installDirectory, "node_modules", ".bin");
+    const installedCommand = join(
+      binDirectory,
+      process.platform === "win32" ? "devdock.cmd" : "devdock",
+    );
+    if (process.platform === "win32") {
+      await Promise.all([
+        access(installedCommand),
+        access(join(binDirectory, "devdock")),
+        access(join(binDirectory, "devdock.ps1")),
+      ]);
+    } else {
+      await access(installedCommand, fsConstants.X_OK);
+    }
+    const isolatedEnvironment = {
+      ...process.env,
+      HOME: userDataRoot,
+      LOCALAPPDATA: userDataRoot,
+      XDG_DATA_HOME: userDataRoot,
+    };
+    const databasePath =
+      process.platform === "win32"
+        ? join(userDataRoot, "DevDock", "registry.sqlite")
+        : process.platform === "darwin"
+          ? join(userDataRoot, "Library", "Application Support", "DevDock", "registry.sqlite")
+          : join(userDataRoot, "devdock", "registry.sqlite");
+    const versionResult = await runNode([npmCli, "run", "--silent", "devdock:version"], {
+      cwd: installDirectory,
+      env: isolatedEnvironment,
+    });
+    assert.equal(versionResult.stdout.trim(), "0.0.0");
+    const helpResult = await runNode([entry, "--help"], {
+      cwd: installDirectory,
+      env: isolatedEnvironment,
+    });
+    assert.match(helpResult.stdout, /^Usage: devdock \[options\]/);
+    const invalidResult = await runNode(
+      [entry, "--unknown"],
+      { cwd: installDirectory, env: isolatedEnvironment },
+      120_000,
+      2,
+    );
+    assert.equal(invalidResult.stdout, "");
+    assert.match(invalidResult.stderr, /^Unknown option: --unknown/);
+    await assert.rejects(access(databasePath), { code: "ENOENT" });
+
+    // POSIX exercises npm's executable bit and shebang. Windows launches the entry directly so
+    // the IPC shutdown message reaches DevDock instead of the intermediate cmd.exe process.
+    const launchExecutable = process.platform === "win32" ? process.execPath : installedCommand;
+    const launchArguments = process.platform === "win32" ? [entry] : [];
+    child = spawn(launchExecutable, launchArguments, {
       cwd: installDirectory,
       env: {
-        ...process.env,
+        ...isolatedEnvironment,
         DEVDOCK_PORT: "0",
-        HOME: userDataRoot,
-        LOCALAPPDATA: userDataRoot,
-        XDG_DATA_HOME: userDataRoot,
       },
       shell: false,
       windowsHide: true,
@@ -176,12 +236,6 @@ test("packed CLI runs from a clean local install and closes through the native O
     }
     const result = await waitForExit(child, 10_000);
     assert.equal(result.code, 0, stderr);
-    const databasePath =
-      process.platform === "win32"
-        ? join(userDataRoot, "DevDock", "registry.sqlite")
-        : process.platform === "darwin"
-          ? join(userDataRoot, "Library", "Application Support", "DevDock", "registry.sqlite")
-          : join(userDataRoot, "devdock", "registry.sqlite");
     await access(databasePath);
   } finally {
     if (child !== undefined && !hasExited(child)) {

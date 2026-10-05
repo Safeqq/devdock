@@ -2,7 +2,7 @@
 
 DevDock is a local dashboard for developer projects and services. Register a trusted project, choose a service or profile, start it, inspect status and logs, open the app, and stop it from one loopback-only dashboard.
 
-Phase 0 established project tooling, runtime contracts, and an HTTP fixture. Phase 1 added a serialized supervisor and native process-tree experiments. Phase 2 added a project registry, safe `package.json` script discovery, SQLite persistence, and an npm launch plan. Phase 3 added the authenticated loopback API and React/Vite dashboard. Phase 4 added diagnostics, readiness, and profiles. Phase 5 added bounded restart, reconciliation, directed shutdown, and reliability gates. Phase 6 added native Windows Job Object and POSIX process-group adapters, the same application contract suite on all three target OS families, and a self-contained local npm package. Phase 7 added profiling, non-secret configuration export, operational documentation, a repeatable dashboard recording, clean-setup verification, and evidence from two trusted real projects. The exact Windows 2025 x64, macOS 15 arm64, and Ubuntu 24.04 x64 matrix passed on 2026-10-04 at commit `6c5707a` in [workflow run 37191697687](https://github.com/Safeqq/devdock/actions/runs/37191697687). See [platform support](docs/platform-support.md), [process contract](docs/process-contract.md), [Windows Job Object spike](docs/windows-job-spike.md), [storage contract](docs/storage-contract.md), [local API contract](docs/local-api-contract.md), and [progress](docs/progress.md).
+Phase 0 established project tooling, runtime contracts, and an HTTP fixture. Phase 1 added a serialized supervisor and native process-tree experiments. Phase 2 added a project registry, safe `package.json` script discovery, SQLite persistence, and an npm launch plan. Phase 3 added the authenticated loopback API and React/Vite dashboard. Phase 4 added diagnostics, readiness, and profiles. Phase 5 added bounded restart, reconciliation, directed shutdown, and reliability gates. Phase 6 added native Windows Job Object and POSIX process-group adapters, the same application contract suite on all three target OS families, and a self-contained local npm package. Phase 7 added profiling, non-secret configuration export, repeatable dashboard recording and clean-setup verification, plus evidence from two trusted real projects. The exact Windows 2025 x64, macOS 15 arm64, and Ubuntu 24.04 x64 matrix passed on 2026-10-04 at commit `6c5707a` in [workflow run 37191697687](https://github.com/Safeqq/devdock/actions/runs/37191697687).
 
 ## Setup
 
@@ -45,17 +45,34 @@ The registry API and dashboard can run as a local server. Configuration discover
 
 The browser tests use an installed Edge/Chrome executable and do not download a browser. They cover configuration without execution, profile creation, the real Start/readiness/log/tab-close/Stop service lifecycle, a successful profile Start/Stop, Open App URL validation, and secret filtering. The runner searches standard browser locations on each target OS; set `DEVDOCK_TEST_BROWSER` to an absolute browser executable path if needed.
 
-The [platform contract workflow](.github/workflows/platform-spike.yml) is configured for Windows 2025 x64, macOS 15 arm64, and Ubuntu 24.04 x64 runners. It records runner details and runs the pinned toolchain, lint, typecheck, unit, integration, clean-package-install, and browser gates. Phase 6 support is limited to the exact combinations recorded in the [platform matrix](docs/platform-support.md); later runner, OS, Node.js, or npm versions require a new passing result.
+The [platform contract workflow](.github/workflows/platform-spike.yml) is configured for Windows 2025 x64, macOS 15 arm64, and Ubuntu 24.04 x64 runners. It records runner details and runs the pinned toolchain, lint, typecheck, unit, integration, clean-package-install, and browser gates. Support is limited to those exact runner, OS, architecture, and toolchain combinations; later runner, OS, Node.js, or npm versions require a new passing result.
 
-## Documentation
-
-Start with the [documentation index](docs/README.md). It links the local API and storage contracts, platform evidence, troubleshooting, performance results, demo and portfolio runbooks, and architecture decision records for the local daemon, bounded log pipeline, and native process ownership.
+## Verification artifacts
 
 `npm run profile:local` writes its current-machine JSON report to ignored `artifacts/profile-latest.json`. `npm run demo:prepare` creates an ignored, dependency-free demo project and prints the paths and ports needed by the demo runbook. `npm run demo:record` drives the actual loopback dashboard in a system Edge/Chrome browser, records only dashboard frames, validates the 3–5 minute WebM, and writes the video plus evidence report under ignored `artifacts/`. `npm run portfolio:self-host` validates the current trusted repository. `npm run portfolio:project` validates a separate project only after its absolute path, npm script, cwd, port, readiness, and explicit trust flag are supplied through the local environment; neither command retains paths or credentials in its ignored report. `npm run verify:clean-setup` copies all current non-ignored repository files to a fresh temporary checkout, runs the README toolchain setup and build, then removes that checkout.
 
 ## Local package
 
-Run `npm run package:local` to create `artifacts/devdock-0.0.0.tgz`. The tarball contains the daemon, dashboard assets, platform helper, and runtime dependencies. It can be installed under any user-writable prefix without administrator access. Launch the installed `node_modules/devdock/bin/devdock.mjs` with the pinned Node executable; the entry point does not require a desktop wrapper or Unix shell. Set `DEVDOCK_PORT=0` to request a free loopback port. Ctrl+C and SIGTERM close the API and owned services; POSIX also handles SIGHUP, while a Windows parent or future desktop wrapper can send the IPC message `{ "type": "shutdown" }` for window-close cleanup.
+Run `npm run package:local` to create `artifacts/devdock-0.0.0.tgz`. The tarball contains the daemon, dashboard assets, platform helper, and runtime dependencies. Install it under any user-writable prefix without administrator access:
+
+```text
+npm install --ignore-scripts --no-audit --no-fund --prefix ./devdock-local ./artifacts/devdock-0.0.0.tgz
+```
+
+npm creates the command under `devdock-local/node_modules/.bin`. Launch it from PowerShell with:
+
+```powershell
+$env:DEVDOCK_PORT = "0"
+& ".\devdock-local\node_modules\.bin\devdock.cmd"
+```
+
+On macOS or Linux, launch the same installed command with:
+
+```sh
+DEVDOCK_PORT=0 ./devdock-local/node_modules/.bin/devdock
+```
+
+Run `devdock --help` through the same installed command for usage, or `devdock --version` to print the package version without starting the daemon. The entry point does not require a desktop wrapper or Unix shell. Port `0` requests a free loopback port. Ctrl+C and SIGTERM close the API and owned services; POSIX also handles SIGHUP, while a Windows parent or future desktop wrapper can send the IPC message `{ "type": "shutdown" }` for window-close cleanup.
 
 ## Fixture control
 

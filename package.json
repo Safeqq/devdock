@@ -25,7 +25,7 @@
   "scripts": {
     "check:toolchain": "node scripts/check-toolchain.mjs",
     "typecheck": "npm run build -w @devdock/contracts && npm run build -w @devdock/platform && npm run build -w @devdock/storage && tsc --noEmit -p tsconfig.json && npm run typecheck -w @devdock/web",
-    "lint": "biome check apps/daemon/src apps/web/src apps/web/vite.config.ts packages/contracts/src packages/platform/src packages/storage/src scripts tests package.json biome.json tsconfig.json apps/daemon/package.json apps/daemon/tsconfig.json apps/web/package.json apps/web/tsconfig.json packages/contracts/package.json packages/platform/package.json packages/storage/package.json packages/contracts/tsconfig.json packages/platform/tsconfig.json packages/storage/tsconfig.json",
+    "lint": "biome check bin apps/daemon/src apps/web/src apps/web/vite.config.ts packages/contracts/src packages/platform/src packages/storage/src scripts tests package.json biome.json tsconfig.json apps/daemon/package.json apps/daemon/tsconfig.json apps/web/package.json apps/web/tsconfig.json packages/contracts/package.json packages/platform/package.json packages/storage/package.json packages/contracts/tsconfig.json packages/platform/tsconfig.json packages/storage/tsconfig.json",
     "test:unit": "npm run build && node scripts/run-tests.mjs unit",
     "test:integration": "npm run build && node scripts/run-tests.mjs integration",
     "test:browser": "npm run build && node scripts/run-tests.mjs browser",

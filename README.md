@@ -29,7 +29,8 @@ Phase 0 established project tooling, runtime contracts, and an HTTP fixture. Pha
 | `npm run verify:clean-setup` | Copy the current repository files to a fresh temporary path, install, check the toolchain and workspace versions, and build. |
 | `npm run verify:package` | Build, pack, install, and exercise the CLI and daemon from a clean local prefix. |
 | `npm run verify:release` | Run the complete local release gate and finish by rebuilding the installable tarball. |
-| `npm run package:local` | Build a self-contained installable tarball in `artifacts/`. |
+| `npm run release:version -- X.Y.Z` | Preview a synchronized manifest, lockfile, and README version update; add `--write` to apply it. |
+| `npm run package:local` | Build and audit a self-contained tarball, then record its hashes in ignored artifacts. |
 | `npm run fixture:http` | Start the fixture on loopback using an available port. |
 | `npm run fixture:tree` | Start a parent fixture that launches the HTTP child and shuts it down on Ctrl+C. |
 | `npm run fixture:control` | Build and open the cooperative fixture control CLI. |
@@ -52,11 +53,11 @@ The [platform contract workflow](.github/workflows/platform-spike.yml) is config
 
 ## Verification artifacts
 
-`npm run profile:local` writes its current-machine JSON report to ignored `artifacts/profile-latest.json`. `npm run demo:prepare` creates an ignored, dependency-free demo project and prints the paths and ports needed by the demo runbook. `npm run demo:record` drives the actual loopback dashboard in a system Edge/Chrome browser, records only dashboard frames, validates the 3–5 minute WebM, and writes the video plus evidence report under ignored `artifacts/`. `npm run portfolio:self-host` validates the current trusted repository. `npm run portfolio:project` validates a separate project only after its absolute path, npm script, cwd, port, readiness, and explicit trust flag are supplied through the local environment; neither command retains paths or credentials in its ignored report. `npm run verify:clean-setup` copies all current non-ignored repository files to a fresh temporary checkout, runs the README toolchain setup and build, then removes that checkout.
+`npm run profile:local` writes its current-machine JSON report to ignored `artifacts/profile-latest.json`. `npm run package:local` writes non-secret size, entry count, SHA-1, SHA-256, npm SHA-512 integrity, all bundled dependency names, and runtime identity to ignored `artifacts/package-latest.json`. `npm run demo:prepare` creates an ignored, dependency-free demo project and prints the paths and ports needed by the demo runbook. `npm run demo:record` drives the actual loopback dashboard in a system Edge/Chrome browser, records only dashboard frames, validates the 3–5 minute WebM, and writes the video plus evidence report under ignored `artifacts/`. `npm run portfolio:self-host` validates the current trusted repository. `npm run portfolio:project` validates a separate project only after its absolute path, npm script, cwd, port, readiness, and explicit trust flag are supplied through the local environment; neither command retains paths or credentials in its ignored report. `npm run verify:clean-setup` copies all current non-ignored repository files to a fresh temporary checkout, runs the README toolchain setup and build, then removes that checkout.
 
 ## Local package
 
-Run `npm run package:local` to create `artifacts/devdock-0.0.0.tgz`. The tarball contains the changelog, daemon, dashboard assets, platform helper, and runtime dependencies. Run `npm run verify:package` to rebuild that package, install it under a clean temporary prefix, exercise its CLI and dashboard startup, and remove the temporary installation. To install it manually under any user-writable prefix without administrator access:
+Run `npm run package:local` to create and audit `artifacts/devdock-0.0.0.tgz` plus `artifacts/package-latest.json`. Packaging checks the required root files and five runtime workspaces, rejects internal source/test and root development files, and independently verifies npm's SHA-1 and SHA-512 values before recording SHA-256. The tarball contains the changelog, daemon, dashboard assets, platform helper, and runtime dependencies. Run `npm run verify:package` to rebuild that package, install it under a clean temporary prefix, exercise its CLI and dashboard startup, and remove the temporary installation. To install it manually under any user-writable prefix without administrator access:
 
 ```text
 npm install --ignore-scripts --no-audit --no-fund --prefix ./devdock-local ./artifacts/devdock-0.0.0.tgz
@@ -76,6 +77,22 @@ DEVDOCK_PORT=0 ./devdock-local/node_modules/.bin/devdock
 ```
 
 Run `devdock --help` through the same installed command for usage, or `devdock --version` to print the package version without starting the daemon. The entry point does not require a desktop wrapper or Unix shell. Port `0` requests a free loopback port. Ctrl+C and SIGTERM close the API and owned services; POSIX also handles SIGHUP, while a Windows parent or future desktop wrapper can send the IPC message `{ "type": "shutdown" }` for window-close cleanup.
+
+## Release preparation
+
+Preview a synchronized version update without changing any file:
+
+```text
+npm run release:version -- 1.0.0
+```
+
+After reviewing the listed files, apply that version explicitly:
+
+```text
+npm run release:version -- 1.0.0 --write
+```
+
+The command updates the root and five workspace manifests, exact internal dependency pins, workspace entries in `package-lock.json`, and the tarball filename shown in this README. It refuses inconsistent starting metadata and reruns `check:versions` after writing, restoring files if final validation fails. It does not change package privacy, choose a license, create a Git tag, or publish anything. Run `npm run verify:release` after applying the selected version.
 
 ## Fixture control
 

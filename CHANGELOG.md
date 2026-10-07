@@ -13,7 +13,7 @@ All notable changes to DevDock will be documented in this file.
 - Environment diagnostics, TCP and HTTP readiness probes, dependency-aware profiles, shared-service leases, rollback, bounded restart policies, and conservative restart reconciliation.
 - A self-contained `devdock` CLI package with side-effect-free help and version commands, clean-prefix installation tests, and a repeatable local packaging command.
 - Three-OS CI coverage, workload profiling, clean-setup verification, a repeatable dashboard demo, and validation against two trusted projects.
-- Local release gates plus a dry-run-first workspace version command that keeps manifests, internal dependencies, the lockfile, and README package names synchronized.
+- Local release gates plus a dry-run-first workspace version command that keeps manifests, internal dependencies, the lockfile, changelog release heading, and README package names synchronized.
 - Audited local package evidence containing verified npm integrity, SHA-256, package sizes, entry counts, bundled dependencies, and runtime identity without local absolute paths.
 
 ### Security

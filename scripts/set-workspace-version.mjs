@@ -18,26 +18,48 @@ const dependencySections = [
 class UsageError extends Error {}
 
 function usage() {
-  return `Usage: node scripts/set-workspace-version.mjs <version> [--write]
+  return `Usage: node scripts/set-workspace-version.mjs <version> [--date YYYY-MM-DD] [--write]
 
-Preview a consistent DevDock workspace version update. Files are only changed when
---write is present. Stable and prerelease SemVer values are accepted.
+Preview a consistent DevDock release version and changelog update. Files are only
+changed when --write is present. The date defaults to the current UTC date.
 `;
+}
+
+function isValidDate(date) {
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(date)) return false;
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === date;
 }
 
 function parseArguments(arguments_) {
   if (arguments_.length === 1 && (arguments_[0] === "--help" || arguments_[0] === "-h")) {
     return { help: true };
   }
-  const write = arguments_.includes("--write");
-  const positional = arguments_.filter((argument) => argument !== "--write");
-  const unknownFlags = positional.filter((argument) => argument.startsWith("-"));
-  if (unknownFlags.length > 0 || positional.length !== 1) throw new UsageError(usage());
-  const [version] = positional;
+  let write = false;
+  let date;
+  let version;
+  for (let index = 0; index < arguments_.length; index += 1) {
+    const argument = arguments_[index];
+    if (argument === "--write") {
+      if (write) throw new UsageError(usage());
+      write = true;
+    } else if (argument === "--date") {
+      if (date !== undefined || index + 1 >= arguments_.length) throw new UsageError(usage());
+      date = arguments_[index + 1];
+      index += 1;
+    } else if (argument.startsWith("-") || version !== undefined) {
+      throw new UsageError(usage());
+    } else {
+      version = argument;
+    }
+  }
+  if (version === undefined) throw new UsageError(usage());
   if (!semverPattern.test(version)) {
     throw new UsageError(`Invalid release version: ${version}\n\n${usage()}`);
   }
-  return { help: false, version, write };
+  date ??= new Date().toISOString().slice(0, 10);
+  if (!isValidDate(date)) throw new UsageError(`Invalid release date: ${date}\n\n${usage()}`);
+  return { help: false, version, write, date };
 }
 
 function readJsonRecord(path) {
@@ -96,6 +118,31 @@ function updateInternalDependencies(manifest, workspaceNames, currentVersion, ne
 
 function serializeJson(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function prepareChangelog(contents, version, date) {
+  const unreleasedHeadings = [...contents.matchAll(/^## Unreleased[ \t]*\r?$/gmu)];
+  if (unreleasedHeadings.length !== 1) {
+    throw new Error("CHANGELOG.md must contain exactly one level-two Unreleased heading");
+  }
+  const versionHeading = `## ${version}`;
+  if (
+    contents
+      .split(/\r?\n/u)
+      .some((line) => line === versionHeading || line.startsWith(`${versionHeading} - `))
+  ) {
+    throw new Error(`CHANGELOG.md already contains a ${version} release heading`);
+  }
+  const [unreleased] = unreleasedHeadings;
+  const headingEnd = unreleased.index + unreleased[0].length;
+  const afterUnreleased = contents.slice(headingEnd);
+  const nextRelease = /^## [^\r\n]+/mu.exec(afterUnreleased);
+  const unreleasedContents =
+    nextRelease === null ? afterUnreleased : afterUnreleased.slice(0, nextRelease.index);
+  if (unreleasedContents.trim().length === 0) {
+    throw new Error("CHANGELOG.md Unreleased section is empty");
+  }
+  return `${contents.slice(0, headingEnd)}\n\n## ${version} - ${date}${afterUnreleased}`;
 }
 
 async function writeChanges(changes) {
@@ -190,18 +237,26 @@ async function main() {
     );
     if (next !== original) changes.push({ path: readmePath, original, next });
   }
+  const changelogPath = join(repositoryRoot, "CHANGELOG.md");
+  if (!existsSync(changelogPath)) throw new Error("CHANGELOG.md is required for a release version");
+  const changelog = readFileSync(changelogPath, "utf8");
+  changes.push({
+    path: changelogPath,
+    original: changelog,
+    next: prepareChangelog(changelog, options.version, options.date),
+  });
 
   const changedPaths = changes.map((change) => toRepositoryPath(change.path));
   if (!options.write) {
     process.stdout.write(
-      `Version preview: ${currentVersion} -> ${options.version}\n${changedPaths.map((path) => `- ${path}`).join("\n")}\nNo files written. Re-run with --write to apply this version.\n`,
+      `Release preview: ${currentVersion} -> ${options.version} (${options.date})\n${changedPaths.map((path) => `- ${path}`).join("\n")}\nNo files written. Re-run with --write to apply this release version.\n`,
     );
     return;
   }
 
   await writeChanges(changes);
   process.stdout.write(
-    `Workspace version updated: ${currentVersion} -> ${options.version}\n${changedPaths.map((path) => `- ${path}`).join("\n")}\n`,
+    `Release version updated: ${currentVersion} -> ${options.version} (${options.date})\n${changedPaths.map((path) => `- ${path}`).join("\n")}\n`,
   );
 }
 

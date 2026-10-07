@@ -29,7 +29,7 @@ Phase 0 established project tooling, runtime contracts, and an HTTP fixture. Pha
 | `npm run verify:clean-setup` | Copy the current repository files to a fresh temporary path, install, check the toolchain and workspace versions, and build. |
 | `npm run verify:package` | Build, pack, install, and exercise the CLI and daemon from a clean local prefix. |
 | `npm run verify:release` | Run the complete local release gate and finish by rebuilding the installable tarball. |
-| `npm run release:version -- X.Y.Z` | Preview a synchronized manifest, lockfile, and README version update; add `--write` to apply it. |
+| `npm run release:version -- X.Y.Z` | Preview a synchronized manifest, lockfile, changelog, and README release update; add `--write` to apply it. |
 | `npm run package:local` | Build and audit a self-contained tarball, then record its hashes in ignored artifacts. |
 | `npm run fixture:http` | Start the fixture on loopback using an available port. |
 | `npm run fixture:tree` | Start a parent fixture that launches the HTTP child and shuts it down on Ctrl+C. |
@@ -83,16 +83,16 @@ Run `devdock --help` through the same installed command for usage, or `devdock -
 Preview a synchronized version update without changing any file:
 
 ```text
-npm run release:version -- 1.0.0
+npm run release:version -- 1.0.0 --date 2026-10-07
 ```
 
 After reviewing the listed files, apply that version explicitly:
 
 ```text
-npm run release:version -- 1.0.0 --write
+npm run release:version -- 1.0.0 --date 2026-10-07 --write
 ```
 
-The command updates the root and five workspace manifests, exact internal dependency pins, workspace entries in `package-lock.json`, and the tarball filename shown in this README. It refuses inconsistent starting metadata and reruns `check:versions` after writing, restoring files if final validation fails. It does not change package privacy, choose a license, create a Git tag, or publish anything. Run `npm run verify:release` after applying the selected version.
+The date is optional and defaults to the current UTC date. The command updates the root and five workspace manifests, exact internal dependency pins, workspace entries in `package-lock.json`, the tarball filename shown in this README, and promotes the non-empty `Unreleased` changelog content under the selected version and date. It refuses inconsistent starting metadata, duplicate release headings, and invalid dates, then reruns `check:versions` after writing and restores every changed file if final validation fails. It does not change package privacy, choose a license, create a Git tag, or publish anything. Run `npm run verify:release` after applying the selected version.
 
 ## Fixture control
 

@@ -16,6 +16,9 @@ All notable changes to DevDock will be documented in this file.
 - Local release gates plus a dry-run-first workspace version command that keeps manifests, internal dependencies, the lockfile, changelog release heading, and README package names synchronized.
 - Audited local package evidence containing verified npm integrity, SHA-256, package sizes, entry counts, bundled dependencies, and runtime identity without local absolute paths.
 - A portable SHA-256 checksum and independent artifact verifier that rejects stale evidence or same-size byte tampering.
+- Target-aware release readiness inspection for local, repository, and npm candidates, with an optional strict gate and non-secret ignored report.
+- Byte-for-byte reproducibility verification across two isolated npm pack attempts before a local artifact is promoted.
+- Independent fresh-repack verification that detects when a valid promoted tarball no longer matches current package inputs.
 
 ### Security
 

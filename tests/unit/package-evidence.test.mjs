@@ -24,7 +24,7 @@ function runVerifier(root) {
   });
 }
 
-test("package evidence verifies intact bytes and rejects a same-size tampered artifact", async () => {
+test("package evidence rejects unproven reproducibility and same-size tampering", async () => {
   const root = await mkdtemp(join(tmpdir(), "devdock evidence café-東京-"));
   try {
     await Promise.all([mkdir(join(root, "scripts")), mkdir(join(root, "artifacts"))]);
@@ -38,6 +38,25 @@ test("package evidence verifies intact bytes and rejects a same-size tampered ar
     const sha1 = createHash("sha1").update(artifact).digest("hex");
     const sha256 = createHash("sha256").update(artifact).digest("hex");
     const integrity = `sha512-${createHash("sha512").update(artifact).digest("base64")}`;
+    const evidence = {
+      schemaVersion: 2,
+      generatedAt: "2030-02-03T00:00:00.000Z",
+      package: {
+        name: "devdock",
+        version: "1.2.3",
+        filename,
+        checksumFilename,
+        sizeBytes: artifact.byteLength,
+        unpackedSizeBytes: 42,
+        entryCount: 1,
+        sha1,
+        sha256,
+        integrity,
+        bundled: requiredWorkspaces,
+        reproducibility: { packRuns: 2, byteForByte: true },
+      },
+    };
+    const evidencePath = join(root, "artifacts", "package-latest.json");
     await Promise.all([
       writeFile(
         join(root, "package.json"),
@@ -45,30 +64,7 @@ test("package evidence verifies intact bytes and rejects a same-size tampered ar
       ),
       writeFile(join(root, "artifacts", filename), artifact),
       writeFile(join(root, "artifacts", checksumFilename), `${sha256}  ${filename}\n`),
-      writeFile(
-        join(root, "artifacts", "package-latest.json"),
-        `${JSON.stringify(
-          {
-            schemaVersion: 1,
-            generatedAt: "2030-02-03T00:00:00.000Z",
-            package: {
-              name: "devdock",
-              version: "1.2.3",
-              filename,
-              checksumFilename,
-              sizeBytes: artifact.byteLength,
-              unpackedSizeBytes: 42,
-              entryCount: 1,
-              sha1,
-              sha256,
-              integrity,
-              bundled: requiredWorkspaces,
-            },
-          },
-          null,
-          2,
-        )}\n`,
-      ),
+      writeFile(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`),
     ]);
 
     const valid = runVerifier(root);
@@ -76,6 +72,14 @@ test("package evidence verifies intact bytes and rejects a same-size tampered ar
     assert.match(valid.stdout, /"type":"package-artifact-verified"/u);
     assert.match(valid.stdout, new RegExp(sha256, "u"));
 
+    evidence.package.reproducibility.byteForByte = false;
+    await writeFile(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`);
+    const unreproducible = runVerifier(root);
+    assert.equal(unreproducible.status, 1);
+    assert.match(unreproducible.stderr, /does not prove repeatable byte-for-byte packing/u);
+
+    evidence.package.reproducibility.byteForByte = true;
+    await writeFile(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`);
     const tampered = Buffer.from(artifact);
     tampered[0] ^= 1;
     await writeFile(join(root, "artifacts", filename), tampered);

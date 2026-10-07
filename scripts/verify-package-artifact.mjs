@@ -22,7 +22,7 @@ async function main() {
   const reportPath = join(artifactDirectory, "package-latest.json");
   const reportText = await readFile(reportPath, "utf8");
   const report = JSON.parse(reportText);
-  requireCondition(report?.schemaVersion === 1, "Package evidence schema is not supported");
+  requireCondition(report?.schemaVersion === 2, "Package evidence schema is not supported");
   requireCondition(report.package?.name === packageMetadata.name, "Package evidence name is stale");
   requireCondition(
     report.package?.version === packageMetadata.version,
@@ -48,6 +48,12 @@ async function main() {
   requireCondition(
     Array.isArray(report.package?.bundled),
     "Package evidence bundled list is invalid",
+  );
+  requireCondition(
+    Number.isInteger(report.package?.reproducibility?.packRuns) &&
+      report.package.reproducibility.packRuns >= 2 &&
+      report.package.reproducibility.byteForByte === true,
+    "Package evidence does not prove repeatable byte-for-byte packing",
   );
   for (const workspace of requiredWorkspaces) {
     requireCondition(

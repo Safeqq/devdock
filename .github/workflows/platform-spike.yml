@@ -36,4 +36,5 @@ jobs:
       - run: npm run test:integration
       - run: npm run package:local
       - run: npm run verify:artifact
+      - run: npm run verify:reproducible
       - run: npm run test:browser

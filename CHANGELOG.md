@@ -15,6 +15,7 @@ All notable changes to DevDock will be documented in this file.
 - Three-OS CI coverage, workload profiling, clean-setup verification, a repeatable dashboard demo, and validation against two trusted projects.
 - Local release gates plus a dry-run-first workspace version command that keeps manifests, internal dependencies, the lockfile, changelog release heading, and README package names synchronized.
 - Audited local package evidence containing verified npm integrity, SHA-256, package sizes, entry counts, bundled dependencies, and runtime identity without local absolute paths.
+- A portable SHA-256 checksum and independent artifact verifier that rejects stale evidence or same-size byte tampering.
 
 ### Security
 

@@ -181,6 +181,7 @@ async function main() {
       name: report.name,
       version: report.version,
       filename: report.filename,
+      checksumFilename: `${report.filename}.sha256`,
       sizeBytes: artifactMetadata.size,
       unpackedSizeBytes: report.unpackedSize,
       entryCount: report.entryCount,
@@ -197,12 +198,17 @@ async function main() {
     },
   };
   const reportPath = join(artifactDirectory, "package-latest.json");
-  await writeFile(reportPath, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
+  const checksumPath = join(artifactDirectory, evidence.package.checksumFilename);
+  await Promise.all([
+    writeFile(reportPath, `${JSON.stringify(evidence, null, 2)}\n`, "utf8"),
+    writeFile(checksumPath, `${sha256}  ${report.filename}\n`, "utf8"),
+  ]);
 
   process.stdout.write(
     `${JSON.stringify({
       type: "local-package-complete",
       artifact: relative(repositoryRoot, artifactPath).split(sep).join("/"),
+      checksum: relative(repositoryRoot, checksumPath).split(sep).join("/"),
       report: relative(repositoryRoot, reportPath).split(sep).join("/"),
       bytes: evidence.package.sizeBytes,
       entryCount: evidence.package.entryCount,

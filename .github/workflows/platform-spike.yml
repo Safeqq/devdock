@@ -35,4 +35,5 @@ jobs:
       - run: npm run test:unit
       - run: npm run test:integration
       - run: npm run package:local
+      - run: npm run verify:artifact
       - run: npm run test:browser

@@ -10,6 +10,7 @@ import {
   sbomEvidenceSchemaVersion,
   sbomFilename,
   validateCycloneDx,
+  validateCycloneDxLockfileProvenance,
 } from "./sbom-utils.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -55,6 +56,7 @@ async function main() {
     readFile(join(artifactDirectory, "package-latest.json"), "utf8"),
   ]);
   const manifest = JSON.parse(manifestText);
+  const lockfile = JSON.parse(lockfileText);
   const packageEvidence = JSON.parse(packageEvidenceText);
   requireCondition(packageEvidence?.schemaVersion === 2, "Package evidence is not current");
   requireCondition(
@@ -73,6 +75,7 @@ async function main() {
     homedir(),
     tmpdir(),
   ]);
+  const provenance = validateCycloneDxLockfileProvenance(normalized, lockfile);
   const contents = `${JSON.stringify(normalized, null, 2)}\n`;
   const sha256 = createHash("sha256").update(contents, "utf8").digest("hex");
   const lockfileSha256 = createHash("sha256").update(lockfileText, "utf8").digest("hex");
@@ -92,6 +95,7 @@ async function main() {
       componentCount: inventory.componentCount,
       dependencyCount: inventory.dependencyCount,
       uniquePackageCount: inventory.uniquePackageCount,
+      ...provenance,
       packageArtifactSha256: packageEvidence.package.sha256,
       sourceLockSha256: lockfileSha256,
       packageLockOnly: true,
@@ -118,6 +122,7 @@ async function main() {
       checksum: relative(repositoryRoot, checksumPath).split(sep).join("/"),
       components: inventory.componentCount,
       uniquePackages: inventory.uniquePackageCount,
+      integrityVerifiedComponents: provenance.integrityVerifiedComponentCount,
       sha256,
     })}\n`,
   );

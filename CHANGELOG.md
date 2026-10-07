@@ -19,7 +19,8 @@ All notable changes to DevDock will be documented in this file.
 - Target-aware release readiness inspection for local, repository, and npm candidates, with an optional strict gate and non-secret ignored report.
 - Byte-for-byte reproducibility verification across two isolated npm pack attempts before a local artifact is promoted.
 - Independent fresh-repack verification that detects when a valid promoted tarball no longer matches current package inputs.
-- Deterministic CycloneDX 1.5 production SBOM generation bound to the lockfile and promoted package inventory, with path and credential validation.
+- Deterministic CycloneDX 1.5 production SBOM generation bound to exact lockfile versions, package URLs, SHA-512 integrity, distribution sources, and the promoted package inventory, with path and credential validation.
+- Deterministic third-party license inventory and evidence verification derived from the production SBOM, without selecting the DevDock project license.
 
 ### Security
 

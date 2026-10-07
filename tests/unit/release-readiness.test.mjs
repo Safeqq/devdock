@@ -59,6 +59,15 @@ function runSbomGenerator(root, npmCli) {
   assert.equal(result.status, 0, result.stderr);
 }
 
+function runLicenseInventoryGenerator(root) {
+  const result = spawnSync(
+    process.execPath,
+    [join(root, "scripts", "generate-license-inventory.mjs")],
+    { cwd: root, encoding: "utf8", windowsHide: true },
+  );
+  assert.equal(result.status, 0, result.stderr);
+}
+
 test("release readiness passes complete npm metadata and reports strict blockers", async () => {
   const npmCli = process.env.npm_execpath;
   assert.equal(typeof npmCli, "string");
@@ -78,11 +87,14 @@ test("release readiness passes complete npm metadata and reports strict blockers
     await Promise.all(
       [
         "check-workspace-versions.mjs",
+        "generate-license-inventory.mjs",
         "generate-sbom.mjs",
         "inspect-release-readiness.mjs",
+        "license-inventory-utils.mjs",
         "sbom-utils.mjs",
         "verify-package-artifact.mjs",
         "verify-package-reproducibility.mjs",
+        "verify-license-inventory.mjs",
         "verify-sbom.mjs",
       ].map((name) => copyFile(join(sourceRoot, "scripts", name), join(root, "scripts", name))),
     );
@@ -208,6 +220,7 @@ test("release readiness passes complete npm metadata and reports strict blockers
       ),
     ]);
     runSbomGenerator(root, npmCli);
+    runLicenseInventoryGenerator(root);
 
     const ready = runInspector(root, ["--target", "npm", "--strict"]);
     assert.equal(ready.status, 0, ready.stderr);

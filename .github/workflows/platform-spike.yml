@@ -39,4 +39,6 @@ jobs:
       - run: npm run verify:reproducible
       - run: npm run package:sbom
       - run: npm run verify:sbom
+      - run: npm run package:licenses
+      - run: npm run verify:licenses
       - run: npm run test:browser

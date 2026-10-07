@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { posix, win32 } from "node:path";
 
 export const cyclonedxSchema = "http://cyclonedx.org/schema/bom-1.5.schema.json";
-export const sbomEvidenceSchemaVersion = 1;
+export const sbomEvidenceSchemaVersion = 2;
 
 export function requireCondition(condition, message) {
   if (!condition) throw new Error(message);
@@ -45,6 +45,42 @@ function npmPurl(name, version) {
   return `pkg:npm/${encodeURIComponent(name.slice(0, slash))}/${encodeURIComponent(name.slice(slash + 1))}@${encodeURIComponent(version)}`;
 }
 
+function packageNameFromLockPath(path) {
+  const marker = "node_modules/";
+  const markerIndex = path.lastIndexOf(marker);
+  requireCondition(markerIndex >= 0, `Package lock path is not installed: ${path}`);
+  const segments = path.slice(markerIndex + marker.length).split("/");
+  const expectedSegments = segments[0]?.startsWith("@") ? 2 : 1;
+  requireCondition(
+    segments.length === expectedSegments && segments.every((segment) => segment.length > 0),
+    `Package lock path is invalid: ${path}`,
+  );
+  return segments.join("/");
+}
+
+function sha512FromIntegrity(integrity, reference) {
+  requireCondition(
+    typeof integrity === "string" && integrity.trim().length > 0,
+    `Package lock component ${reference} has no integrity`,
+  );
+  const sha512Tokens = integrity
+    .trim()
+    .split(/\s+/u)
+    .filter((token) => token.startsWith("sha512-"));
+  requireCondition(
+    sha512Tokens.length === 1,
+    `Package lock component ${reference} must have one SHA-512 integrity`,
+  );
+  const encoded = sha512Tokens[0].slice("sha512-".length);
+  const digest = Buffer.from(encoded, "base64");
+  const canonical = digest.toString("base64").replace(/=+$/u, "");
+  requireCondition(
+    digest.byteLength === 64 && canonical === encoded.replace(/=+$/u, ""),
+    `Package lock component ${reference} has invalid SHA-512 integrity`,
+  );
+  return digest.toString("hex");
+}
+
 export function normalizeCycloneDx(document, manifest) {
   const normalized = structuredClone(document);
   const rootComponent = normalized.metadata?.component;
@@ -74,7 +110,7 @@ export function normalizeCycloneDx(document, manifest) {
   return canonicalize({ ...semantic, serialNumber });
 }
 
-function packageNameFromReference(reference) {
+export function packageNameFromReference(reference) {
   const versionSeparator = reference.lastIndexOf("@");
   requireCondition(versionSeparator > 0, `CycloneDX component has invalid reference ${reference}`);
   return reference.slice(0, versionSeparator);
@@ -213,6 +249,132 @@ export function validateCycloneDx(document, manifest, packageEvidence, forbidden
     componentCount: document.components.length,
     dependencyCount: document.dependencies.length,
     uniquePackageCount: componentNames.size,
+  };
+}
+
+export function validateCycloneDxLockfileProvenance(document, lockfile) {
+  requireCondition(Array.isArray(document?.components), "CycloneDX components are missing");
+  requireCondition(lockfile?.lockfileVersion === 3, "Package lock version must be 3");
+  requireCondition(
+    lockfile.packages !== null && typeof lockfile.packages === "object",
+    "Package lock inventory is missing",
+  );
+
+  const expected = new Map();
+  let linkedComponentCount = 0;
+  for (const [path, entry] of Object.entries(lockfile.packages)) {
+    if (!path.includes("node_modules/") || entry?.dev === true) continue;
+    let name;
+    let version;
+    let resolved = null;
+    let sha512 = null;
+    if (entry?.link === true) {
+      requireCondition(
+        typeof entry.resolved === "string" && entry.resolved.length > 0,
+        `Linked package ${path} has no target`,
+      );
+      const target = lockfile.packages[entry.resolved];
+      requireCondition(
+        typeof target?.name === "string" && target.name.length > 0,
+        `Linked package target ${entry.resolved} has no name`,
+      );
+      requireCondition(
+        typeof target.version === "string" && target.version.length > 0,
+        `Linked package target ${entry.resolved} has no version`,
+      );
+      name = target.name;
+      version = target.version;
+      requireCondition(
+        packageNameFromLockPath(path) === name,
+        `Linked package path ${path} does not match ${name}`,
+      );
+      linkedComponentCount += 1;
+    } else {
+      name = packageNameFromLockPath(path);
+      requireCondition(
+        typeof entry?.version === "string" && entry.version.length > 0,
+        `Package lock component ${name} has no version`,
+      );
+      requireCondition(
+        typeof entry.resolved === "string" && entry.resolved.length > 0,
+        `Package lock component ${name}@${entry.version} has no resolved source`,
+      );
+      version = entry.version;
+      resolved = entry.resolved;
+      sha512 = sha512FromIntegrity(entry.integrity, `${name}@${version}`);
+    }
+    const reference = `${name}@${version}`;
+    requireCondition(
+      !expected.has(reference),
+      `Package lock contains duplicate production component ${reference}`,
+    );
+    expected.set(reference, { name, version, resolved, sha512 });
+  }
+
+  requireCondition(
+    expected.size === document.components.length,
+    `CycloneDX has ${document.components.length} components but the production lockfile has ${expected.size}`,
+  );
+  const actual = new Map(
+    document.components.map((component) => [component?.["bom-ref"], component]),
+  );
+  requireCondition(
+    actual.size === document.components.length,
+    "CycloneDX component references are not unique",
+  );
+
+  let integrityVerifiedComponentCount = 0;
+  let distributionVerifiedComponentCount = 0;
+  for (const [reference, locked] of expected) {
+    const component = actual.get(reference);
+    requireCondition(
+      component !== undefined,
+      `CycloneDX is missing production lockfile component ${reference}`,
+    );
+    requireCondition(
+      component.version === locked.version,
+      `CycloneDX component ${reference} has a stale version`,
+    );
+    requireCondition(
+      component.purl === npmPurl(locked.name, locked.version),
+      `CycloneDX component ${reference} has a stale package URL`,
+    );
+    if (locked.sha512 === null) continue;
+    const hashes = Array.isArray(component.hashes)
+      ? component.hashes.filter(
+          (hash) =>
+            typeof hash?.alg === "string" &&
+            hash.alg.replaceAll("-", "").toUpperCase() === "SHA512",
+        )
+      : [];
+    requireCondition(
+      hashes.length === 1 &&
+        typeof hashes[0].content === "string" &&
+        hashes[0].content.toLowerCase() === locked.sha512,
+      `CycloneDX component ${reference} does not match lockfile SHA-512 integrity`,
+    );
+    integrityVerifiedComponentCount += 1;
+    const distributions = Array.isArray(component.externalReferences)
+      ? component.externalReferences.filter((reference_) => reference_?.type === "distribution")
+      : [];
+    requireCondition(
+      distributions.length === 1 && distributions[0].url === locked.resolved,
+      `CycloneDX component ${reference} does not match its lockfile distribution`,
+    );
+    distributionVerifiedComponentCount += 1;
+  }
+  for (const reference of actual.keys()) {
+    requireCondition(
+      expected.has(reference),
+      `CycloneDX includes component ${String(reference)} that is absent from the production lockfile`,
+    );
+  }
+
+  return {
+    lockfileComponentCount: expected.size,
+    linkedComponentCount,
+    integrityVerifiedComponentCount,
+    distributionVerifiedComponentCount,
   };
 }
 

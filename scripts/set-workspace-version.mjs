@@ -231,10 +231,7 @@ async function main() {
   const readmePath = join(repositoryRoot, "README.md");
   if (existsSync(readmePath)) {
     const original = readFileSync(readmePath, "utf8");
-    const next = original.replaceAll(
-      `devdock-${currentVersion}.tgz`,
-      `devdock-${options.version}.tgz`,
-    );
+    const next = original.replaceAll(`devdock-${currentVersion}`, `devdock-${options.version}`);
     if (next !== original) changes.push({ path: readmePath, original, next });
   }
   const changelogPath = join(repositoryRoot, "CHANGELOG.md");

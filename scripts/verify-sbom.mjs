@@ -8,6 +8,7 @@ import {
   sbomEvidenceSchemaVersion,
   sbomFilename,
   validateCycloneDx,
+  validateCycloneDxLockfileProvenance,
 } from "./sbom-utils.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -21,6 +22,7 @@ async function main() {
     readFile(join(artifactDirectory, "sbom-latest.json"), "utf8"),
   ]);
   const manifest = JSON.parse(manifestText);
+  const lockfile = JSON.parse(lockfileText);
   const packageEvidence = JSON.parse(packageEvidenceText);
   const evidence = JSON.parse(evidenceText);
   requireCondition(
@@ -56,6 +58,7 @@ async function main() {
     homedir(),
     tmpdir(),
   ]);
+  const provenance = validateCycloneDxLockfileProvenance(document, lockfile);
   requireCondition(evidence.sbom.format === document.bomFormat, "SBOM format evidence is stale");
   requireCondition(
     evidence.sbom.specVersion === document.specVersion,
@@ -71,6 +74,9 @@ async function main() {
       evidence.sbom.uniquePackageCount === inventory.uniquePackageCount,
     "SBOM inventory counts are stale",
   );
+  for (const [key, value] of Object.entries(provenance)) {
+    requireCondition(evidence.sbom[key] === value, `SBOM ${key} evidence is stale`);
+  }
   requireCondition(
     evidence.sbom.sizeBytes === Buffer.byteLength(contents, "utf8"),
     "SBOM size evidence is stale",
@@ -93,6 +99,7 @@ async function main() {
       sbom: relative(repositoryRoot, sbomPath).split(sep).join("/"),
       components: inventory.componentCount,
       uniquePackages: inventory.uniquePackageCount,
+      integrityVerifiedComponents: provenance.integrityVerifiedComponentCount,
       sha256,
     })}\n`,
   );

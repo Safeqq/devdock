@@ -13,6 +13,9 @@ const reproducibilityCheckPath = fileURLToPath(
   new URL("./verify-package-reproducibility.mjs", import.meta.url),
 );
 const sbomCheckPath = fileURLToPath(new URL("./verify-sbom.mjs", import.meta.url));
+const licenseInventoryCheckPath = fileURLToPath(
+  new URL("./verify-license-inventory.mjs", import.meta.url),
+);
 const targets = new Set(["local", "repository", "npm"]);
 const semverPattern =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?$/u;
@@ -203,6 +206,14 @@ async function main() {
     sbom.passed,
     "Production SBOM matches the package artifact and current lockfile",
     sbom.details || "SBOM verification failed",
+  );
+  const licenseInventory = runCheck(licenseInventoryCheckPath);
+  addCheck(
+    checks,
+    "third-party-license-inventory",
+    licenseInventory.passed,
+    "Third-party license metadata matches the current production SBOM",
+    licenseInventory.details || "Third-party license inventory verification failed",
   );
 
   const publicTarget = options.target === "repository" || options.target === "npm";

@@ -83,7 +83,7 @@ test("release version update previews safely and writes metadata, changelog, and
       ),
       writeFile(
         join(root, "README.md"),
-        "Build artifacts/devdock-0.0.0.tgz and install artifacts/devdock-0.0.0.tgz.\n",
+        "Build artifacts/devdock-0.0.0.tgz, inspect artifacts/devdock-0.0.0.cdx.json, and verify artifacts/devdock-0.0.0.licenses.json.\n",
       ),
       writeFile(
         join(root, "CHANGELOG.md"),
@@ -148,8 +148,11 @@ test("release version update previews safely and writes metadata, changelog, and
     assert.equal(lockfile.packages["packages/contracts"].version, "1.2.3-rc.1");
     assert.equal(lockfile.packages[""].dependencies["@devdock/daemon"], "1.2.3-rc.1");
     assert.equal(lockfile.packages["apps/daemon"].dependencies["@devdock/contracts"], "1.2.3-rc.1");
-    assert.equal(readme.includes("devdock-0.0.0.tgz"), false);
-    assert.equal(readme.match(/devdock-1\.2\.3-rc\.1\.tgz/gu)?.length, 2);
+    assert.equal(readme.includes("devdock-0.0.0"), false);
+    assert.equal(readme.match(/devdock-1\.2\.3-rc\.1/gu)?.length, 3);
+    assert.match(readme, /devdock-1\.2\.3-rc\.1\.tgz/u);
+    assert.match(readme, /devdock-1\.2\.3-rc\.1\.cdx\.json/u);
+    assert.match(readme, /devdock-1\.2\.3-rc\.1\.licenses\.json/u);
     assert.match(changelog, /## Unreleased\n\n## 1\.2\.3-rc\.1 - 2030-02-03/u);
     assert.equal(changelog.match(/^## Unreleased$/gmu)?.length, 1);
     assert.equal(changelog.match(/^## 1\.2\.3-rc\.1 - 2030-02-03$/gmu)?.length, 1);

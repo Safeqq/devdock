@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { normalizeCycloneDx } from "../../scripts/sbom-utils.mjs";
+import { normalizeCycloneDx, sbomEvidenceSchemaVersion } from "../../scripts/sbom-utils.mjs";
 
 const sourceRoot = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -43,7 +43,21 @@ test("SBOM evidence rejects stale lockfiles, package artifacts, and document byt
         bundled: ["dependency"],
       },
     };
-    const lockfileText = json({ name: "devdock", version: "1.2.3", lockfileVersion: 3 });
+    const digest = Buffer.alloc(64, 0xab);
+    const distribution = "https://registry.npmjs.org/dependency/-/dependency-4.5.6.tgz";
+    const lockfileText = json({
+      name: "devdock",
+      version: "1.2.3",
+      lockfileVersion: 3,
+      packages: {
+        "": { name: "devdock", version: "1.2.3" },
+        "node_modules/dependency": {
+          version: "4.5.6",
+          resolved: distribution,
+          integrity: `sha512-${digest.toString("base64")}`,
+        },
+      },
+    });
     const document = normalizeCycloneDx(
       {
         $schema: "http://cyclonedx.org/schema/bom-1.5.schema.json",
@@ -67,6 +81,8 @@ test("SBOM evidence rejects stale lockfiles, package artifacts, and document byt
             name: "dependency",
             version: "4.5.6",
             purl: "pkg:npm/dependency@4.5.6",
+            hashes: [{ alg: "SHA-512", content: digest.toString("hex") }],
+            externalReferences: [{ type: "distribution", url: distribution }],
           },
         ],
         dependencies: [
@@ -81,7 +97,7 @@ test("SBOM evidence rejects stale lockfiles, package artifacts, and document byt
     const checksumFilename = `${filename}.sha256`;
     const sha256 = createHash("sha256").update(contents, "utf8").digest("hex");
     const evidence = {
-      schemaVersion: 1,
+      schemaVersion: sbomEvidenceSchemaVersion,
       sbom: {
         format: "CycloneDX",
         specVersion: "1.5",
@@ -93,6 +109,10 @@ test("SBOM evidence rejects stale lockfiles, package artifacts, and document byt
         componentCount: 1,
         dependencyCount: 2,
         uniquePackageCount: 1,
+        lockfileComponentCount: 1,
+        linkedComponentCount: 0,
+        integrityVerifiedComponentCount: 1,
+        distributionVerifiedComponentCount: 1,
         packageArtifactSha256: packageEvidence.package.sha256,
         sourceLockSha256: createHash("sha256").update(lockfileText, "utf8").digest("hex"),
         packageLockOnly: true,

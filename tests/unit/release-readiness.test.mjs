@@ -40,6 +40,25 @@ function runNpmPack(root, npmCli) {
   return reports[0];
 }
 
+function normalizeLockfile(root, npmCli) {
+  const result = spawnSync(
+    process.execPath,
+    [npmCli, "install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"],
+    { cwd: root, encoding: "utf8", windowsHide: true },
+  );
+  assert.equal(result.status, 0, result.stderr);
+}
+
+function runSbomGenerator(root, npmCli) {
+  const result = spawnSync(process.execPath, [join(root, "scripts", "generate-sbom.mjs")], {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...process.env, npm_execpath: npmCli },
+    windowsHide: true,
+  });
+  assert.equal(result.status, 0, result.stderr);
+}
+
 test("release readiness passes complete npm metadata and reports strict blockers", async () => {
   const npmCli = process.env.npm_execpath;
   assert.equal(typeof npmCli, "string");
@@ -50,15 +69,21 @@ test("release readiness passes complete npm metadata and reports strict blockers
     await Promise.all([
       mkdir(join(root, "scripts")),
       mkdir(join(root, "apps", "daemon"), { recursive: true }),
+      mkdir(join(root, "apps", "web"), { recursive: true }),
       mkdir(join(root, "packages", "contracts"), { recursive: true }),
+      mkdir(join(root, "packages", "platform"), { recursive: true }),
+      mkdir(join(root, "packages", "storage"), { recursive: true }),
       mkdir(join(root, "artifacts")),
     ]);
     await Promise.all(
       [
         "check-workspace-versions.mjs",
+        "generate-sbom.mjs",
         "inspect-release-readiness.mjs",
+        "sbom-utils.mjs",
         "verify-package-artifact.mjs",
         "verify-package-reproducibility.mjs",
+        "verify-sbom.mjs",
       ].map((name) => copyFile(join(sourceRoot, "scripts", name), join(root, "scripts", name))),
     );
 
@@ -80,12 +105,29 @@ test("release readiness passes complete npm metadata and reports strict blockers
           name: "@devdock/daemon",
           version: "1.2.3",
           private: true,
-          dependencies: { "@devdock/contracts": "1.2.3" },
+          dependencies: {
+            "@devdock/contracts": "1.2.3",
+            "@devdock/platform": "1.2.3",
+            "@devdock/storage": "1.2.3",
+            "@devdock/web": "1.2.3",
+          },
         }),
+      ),
+      writeFile(
+        join(root, "apps", "web", "package.json"),
+        json({ name: "@devdock/web", version: "1.2.3", private: true }),
       ),
       writeFile(
         join(root, "packages", "contracts", "package.json"),
         json({ name: "@devdock/contracts", version: "1.2.3", private: true }),
+      ),
+      writeFile(
+        join(root, "packages", "platform", "package.json"),
+        json({ name: "@devdock/platform", version: "1.2.3", private: true }),
+      ),
+      writeFile(
+        join(root, "packages", "storage", "package.json"),
+        json({ name: "@devdock/storage", version: "1.2.3", private: true }),
       ),
       writeFile(
         join(root, "package-lock.json"),
@@ -102,9 +144,28 @@ test("release readiness passes complete npm metadata and reports strict blockers
             "apps/daemon": {
               name: "@devdock/daemon",
               version: "1.2.3",
-              dependencies: { "@devdock/contracts": "1.2.3" },
+              dependencies: {
+                "@devdock/contracts": "1.2.3",
+                "@devdock/platform": "1.2.3",
+                "@devdock/storage": "1.2.3",
+                "@devdock/web": "1.2.3",
+              },
             },
+            "apps/web": { name: "@devdock/web", version: "1.2.3" },
+            "node_modules/@devdock/contracts": {
+              resolved: "packages/contracts",
+              link: true,
+            },
+            "node_modules/@devdock/daemon": { resolved: "apps/daemon", link: true },
+            "node_modules/@devdock/platform": {
+              resolved: "packages/platform",
+              link: true,
+            },
+            "node_modules/@devdock/storage": { resolved: "packages/storage", link: true },
+            "node_modules/@devdock/web": { resolved: "apps/web", link: true },
             "packages/contracts": { name: "@devdock/contracts", version: "1.2.3" },
+            "packages/platform": { name: "@devdock/platform", version: "1.2.3" },
+            "packages/storage": { name: "@devdock/storage", version: "1.2.3" },
           },
         }),
       ),
@@ -115,6 +176,7 @@ test("release readiness passes complete npm metadata and reports strict blockers
       writeFile(join(root, "LICENSE"), "MIT fixture license\n"),
     ]);
 
+    normalizeLockfile(root, npmCli);
     const packReport = runNpmPack(root, npmCli);
     const filename = packReport.filename;
     const checksumFilename = `${filename}.sha256`;
@@ -145,6 +207,7 @@ test("release readiness passes complete npm metadata and reports strict blockers
         }),
       ),
     ]);
+    runSbomGenerator(root, npmCli);
 
     const ready = runInspector(root, ["--target", "npm", "--strict"]);
     assert.equal(ready.status, 0, ready.stderr);

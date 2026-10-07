@@ -12,6 +12,7 @@ const artifactCheckPath = fileURLToPath(new URL("./verify-package-artifact.mjs",
 const reproducibilityCheckPath = fileURLToPath(
   new URL("./verify-package-reproducibility.mjs", import.meta.url),
 );
+const sbomCheckPath = fileURLToPath(new URL("./verify-sbom.mjs", import.meta.url));
 const targets = new Set(["local", "repository", "npm"]);
 const semverPattern =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?$/u;
@@ -194,6 +195,14 @@ async function main() {
     reproducibility.passed,
     "Promoted artifact matches a fresh npm pack byte for byte",
     reproducibility.details || "Fresh package comparison failed",
+  );
+  const sbom = runCheck(sbomCheckPath);
+  addCheck(
+    checks,
+    "sbom-evidence",
+    sbom.passed,
+    "Production SBOM matches the package artifact and current lockfile",
+    sbom.details || "SBOM verification failed",
   );
 
   const publicTarget = options.target === "repository" || options.target === "npm";

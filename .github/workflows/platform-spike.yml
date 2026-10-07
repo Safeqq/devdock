@@ -37,4 +37,6 @@ jobs:
       - run: npm run package:local
       - run: npm run verify:artifact
       - run: npm run verify:reproducible
+      - run: npm run package:sbom
+      - run: npm run verify:sbom
       - run: npm run test:browser

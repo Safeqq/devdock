@@ -8,6 +8,7 @@
     "devdock": "bin/devdock.mjs"
   },
   "files": [
+    "CHANGELOG.md",
     "bin"
   ],
   "bundleDependencies": [
@@ -24,6 +25,7 @@
   ],
   "scripts": {
     "check:toolchain": "node scripts/check-toolchain.mjs",
+    "check:versions": "node scripts/check-workspace-versions.mjs",
     "typecheck": "npm run build -w @devdock/contracts && npm run build -w @devdock/platform && npm run build -w @devdock/storage && tsc --noEmit -p tsconfig.json && npm run typecheck -w @devdock/web",
     "lint": "biome check bin apps/daemon/src apps/web/src apps/web/vite.config.ts packages/contracts/src packages/platform/src packages/storage/src scripts tests package.json biome.json tsconfig.json apps/daemon/package.json apps/daemon/tsconfig.json apps/web/package.json apps/web/tsconfig.json packages/contracts/package.json packages/platform/package.json packages/storage/package.json packages/contracts/tsconfig.json packages/platform/tsconfig.json packages/storage/tsconfig.json",
     "test:unit": "npm run build && node scripts/run-tests.mjs unit",
@@ -35,8 +37,10 @@
     "portfolio:project": "npm run build && node scripts/verify-project-usage.mjs",
     "portfolio:self-host": "npm run build && node scripts/verify-self-host.mjs",
     "verify:clean-setup": "node scripts/verify-clean-setup.mjs",
+    "verify:package": "npm run check:versions && npm run build && node --test --test-concurrency=1 tests/integration/package-install.test.mjs",
+    "verify:release": "npm run check:toolchain && npm run check:versions && npm run typecheck && npm run lint && npm run test:unit && npm run test:integration && npm run test:browser && npm run verify:clean-setup && npm run package:local",
     "build": "npm run build -w @devdock/contracts && npm run build -w @devdock/platform && npm run build -w @devdock/storage && npm run build -w @devdock/web && npm run build -w @devdock/daemon",
-    "package:local": "npm run build && npm pack --pack-destination artifacts",
+    "package:local": "npm run check:versions && npm run build && npm pack --pack-destination artifacts",
     "fixture:http": "node tests/fixtures/http-server.mjs",
     "fixture:tree": "node tests/fixtures/tree-parent.mjs",
     "fixture:control": "npm run build && node apps/daemon/dist/cli.js",

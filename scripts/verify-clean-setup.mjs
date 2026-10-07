@@ -111,6 +111,7 @@ async function main() {
     const fileCount = await copyRepository(checkout);
     const installMs = await runNpm(npmCli, checkout, ["ci", "--no-audit", "--no-fund"], 300_000);
     const toolchainMs = await runNpm(npmCli, checkout, ["run", "check:toolchain"], 30_000);
+    const versionsMs = await runNpm(npmCli, checkout, ["run", "check:versions"], 30_000);
     const buildMs = await runNpm(npmCli, checkout, ["run", "build"], 180_000);
     process.stdout.write(
       `${JSON.stringify({
@@ -119,6 +120,7 @@ async function main() {
         node: process.version,
         installMs: Number(installMs.toFixed(2)),
         toolchainMs: Number(toolchainMs.toFixed(2)),
+        versionsMs: Number(versionsMs.toFixed(2)),
         buildMs: Number(buildMs.toFixed(2)),
       })}\n`,
     );

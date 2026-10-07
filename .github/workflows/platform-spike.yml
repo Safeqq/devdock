@@ -29,6 +29,7 @@ jobs:
         run: node scripts/print-platform.mjs
       - run: npm ci --no-audit --no-fund
       - run: npm run check:toolchain
+      - run: npm run check:versions
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run test:unit

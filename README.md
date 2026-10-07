@@ -2,18 +2,19 @@
 
 DevDock is a local dashboard for developer projects and services. Register a trusted project, choose a service or profile, start it, inspect status and logs, open the app, and stop it from one loopback-only dashboard.
 
-Phase 0 established project tooling, runtime contracts, and an HTTP fixture. Phase 1 added a serialized supervisor and native process-tree experiments. Phase 2 added a project registry, safe `package.json` script discovery, SQLite persistence, and an npm launch plan. Phase 3 added the authenticated loopback API and React/Vite dashboard. Phase 4 added diagnostics, readiness, and profiles. Phase 5 added bounded restart, reconciliation, directed shutdown, and reliability gates. Phase 6 added native Windows Job Object and POSIX process-group adapters, the same application contract suite on all three target OS families, and a self-contained local npm package. Phase 7 added profiling, non-secret configuration export, repeatable dashboard recording and clean-setup verification, plus evidence from two trusted real projects. The exact Windows 2025 x64, macOS 15 arm64, and Ubuntu 24.04 x64 matrix passed on 2026-10-04 at commit `6c5707a` in [workflow run 37191697687](https://github.com/Safeqq/devdock/actions/runs/37191697687).
+Phase 0 established project tooling, runtime contracts, and an HTTP fixture. Phase 1 added a serialized supervisor and native process-tree experiments. Phase 2 added a project registry, safe `package.json` script discovery, SQLite persistence, and an npm launch plan. Phase 3 added the authenticated loopback API and React/Vite dashboard. Phase 4 added diagnostics, readiness, and profiles. Phase 5 added bounded restart, reconciliation, directed shutdown, and reliability gates. Phase 6 added native Windows Job Object and POSIX process-group adapters, the same application contract suite on all three target OS families, and a self-contained local npm package. Phase 7 added profiling, non-secret configuration export, repeatable dashboard recording and clean-setup verification, plus evidence from two trusted real projects. The exact Windows 2025 x64, macOS 15 arm64, and Ubuntu 24.04 x64 matrix, including installed CLI and packed-content gates, passed on 2026-10-05 at commit `635ad15` in [workflow run 37342681182](https://github.com/Safeqq/devdock/actions/runs/37342681182).
 
 ## Setup
 
 1. Install Node.js 24.21.0, which includes npm 11.19.0. The required versions are recorded in `.node-version` and `package.json`; `.npmrc` enforces them during installation.
 2. Run `npm ci` from the repository root.
-3. Run `npm run check:toolchain` to confirm the runtime and package manager.
+3. Run `npm run check:toolchain` and `npm run check:versions` to confirm the runtime, package manager, workspace manifests, internal dependency pins, and lockfile.
 
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
+| `npm run check:versions` | Verify that every workspace, internal dependency, and lockfile entry uses the root version. |
 | `npm run typecheck` | Check the strict TypeScript contracts. |
 | `npm run lint` | Lint and format-check source, scripts, tests, and configuration. |
 | `npm run build` | Compile each workspace package to its ignored `dist/` output. |
@@ -25,7 +26,9 @@ Phase 0 established project tooling, runtime contracts, and an HTTP fixture. Pha
 | `npm run demo:record` | Build and record the real dashboard demo to an ignored local WebM artifact. |
 | `npm run portfolio:project` | Validate one explicitly trusted external npm service from environment-supplied configuration. |
 | `npm run portfolio:self-host` | Run a trusted self-host lifecycle check without retaining paths or credentials. |
-| `npm run verify:clean-setup` | Copy the current repository files to a fresh temporary path, install, check the toolchain, and build. |
+| `npm run verify:clean-setup` | Copy the current repository files to a fresh temporary path, install, check the toolchain and workspace versions, and build. |
+| `npm run verify:package` | Build, pack, install, and exercise the CLI and daemon from a clean local prefix. |
+| `npm run verify:release` | Run the complete local release gate and finish by rebuilding the installable tarball. |
 | `npm run package:local` | Build a self-contained installable tarball in `artifacts/`. |
 | `npm run fixture:http` | Start the fixture on loopback using an available port. |
 | `npm run fixture:tree` | Start a parent fixture that launches the HTTP child and shuts it down on Ctrl+C. |
@@ -53,7 +56,7 @@ The [platform contract workflow](.github/workflows/platform-spike.yml) is config
 
 ## Local package
 
-Run `npm run package:local` to create `artifacts/devdock-0.0.0.tgz`. The tarball contains the daemon, dashboard assets, platform helper, and runtime dependencies. Install it under any user-writable prefix without administrator access:
+Run `npm run package:local` to create `artifacts/devdock-0.0.0.tgz`. The tarball contains the changelog, daemon, dashboard assets, platform helper, and runtime dependencies. Run `npm run verify:package` to rebuild that package, install it under a clean temporary prefix, exercise its CLI and dashboard startup, and remove the temporary installation. To install it manually under any user-writable prefix without administrator access:
 
 ```text
 npm install --ignore-scripts --no-audit --no-fund --prefix ./devdock-local ./artifacts/devdock-0.0.0.tgz

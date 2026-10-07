@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -112,6 +112,11 @@ function waitForReady(child, lines, timeoutMs) {
 test("packed CLI runs from a clean local install and closes through the native OS path", {
   timeout: 300_000,
 }, async () => {
+  const packageMetadata = JSON.parse(await readFile(join(repositoryRoot, "package.json"), "utf8"));
+  assert.equal(packageMetadata.name, "devdock");
+  assert.equal(typeof packageMetadata.version, "string");
+  assert.notEqual(packageMetadata.version.length, 0);
+  const expectedVersion = packageMetadata.version;
   const tempRoot = await mkdtemp(join(tmpdir(), "devdock package café-東京-"));
   const packageDirectory = join(tempRoot, "tarball output");
   const installDirectory = join(tempRoot, "clean install");
@@ -154,12 +159,12 @@ test("packed CLI runs from a clean local install and closes through the native O
     assert.equal(packReports.length, 1);
     const [packReport] = packReports;
     assert.equal(packReport.name, "devdock");
-    assert.equal(packReport.version, "0.0.0");
-    assert.equal(packReport.filename, "devdock-0.0.0.tgz");
+    assert.equal(packReport.version, expectedVersion);
+    assert.equal(packReport.filename, `devdock-${expectedVersion}.tgz`);
     assert.equal(Array.isArray(packReport.files), true);
     assert.equal(packReport.entryCount, packReport.files.length);
     const packedPaths = packReport.files.map((file) => file.path);
-    for (const requiredPath of ["README.md", "bin/devdock.mjs", "package.json"]) {
+    for (const requiredPath of ["CHANGELOG.md", "README.md", "bin/devdock.mjs", "package.json"]) {
       assert.equal(packedPaths.includes(requiredPath), true, `Package is missing ${requiredPath}`);
     }
     const forbiddenRootPath =
@@ -230,7 +235,7 @@ test("packed CLI runs from a clean local install and closes through the native O
       cwd: installDirectory,
       env: isolatedEnvironment,
     });
-    assert.equal(versionResult.stdout.trim(), "0.0.0");
+    assert.equal(versionResult.stdout.trim(), expectedVersion);
     const helpResult = await runNode([entry, "--help"], {
       cwd: installDirectory,
       env: isolatedEnvironment,

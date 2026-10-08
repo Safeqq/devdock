@@ -1,8 +1,15 @@
 # Release Readiness
 
-Audit date: 2026-10-07
+Audit date: 2026-10-08
 
-DevDock has completed the implementation and verification gates in phases 0–7. The latest full native matrix passed at commit `635ad15` in [workflow 37342681182](https://github.com/Safeqq/devdock/actions/runs/37342681182), including build, typecheck, lint, unit, integration, installed-package lifecycle, and browser tests on Windows Server 2025 x64, macOS 15 arm64, and Ubuntu 24.04 x64.
+DevDock has completed the implementation and verification gates in phases 0–7. The latest full native matrix passed at commit `d329d1c` in [workflow 37648114384](https://github.com/Safeqq/devdock/actions/runs/37648114384), including build, typecheck, lint, unit, integration, installed-package lifecycle, reproducible packaging, artifact and fresh-repack verification, SBOM, license inventory, and browser tests on Windows Server 2025 x64, macOS 15 arm64, and Ubuntu 24.04 x64.
+
+## Native matrix package evidence
+
+- All three runners produced the same CycloneDX SBOM (SHA-256 `be49ccdb19fa85aa8fc71c61e6e13fcce614f182aa474b5698ba011b7bb64ff0`) and the same license inventory hash as the local Windows run.
+- Each runner's tarball had 3,533 entries and passed its own two-pack and fresh-repack checks. macOS and Ubuntu produced identical bytes (6,059,930 bytes, SHA-256 `307bf7f8b69d23832e118b15dce2b518830eff1919ab7eefcff2dd551c9e5d69`); Windows produced 6,059,869 bytes with SHA-256 `f2321ad84acd4584be876f8d2e10da16e814bc532e24cf7bf3ca6fc5a4592d4f`. Tarball reproducibility is therefore proven per environment, not across OS families.
+- The local Windows tarball described below has 3,536 entries, three more than a clean checkout. It is not equivalent to a release artifact until that difference is resolved.
+- The previous commit `da548d3` had one Ubuntu browser-configuration test timeout at 35 seconds in [workflow 37604760902](https://github.com/Safeqq/devdock/actions/runs/37604760902). Later runs passed without browser or UI changes, so the cause remains open.
 
 ## Local package evidence
 
@@ -22,7 +29,7 @@ DevDock has completed the implementation and verification gates in phases 0–7.
 - `npm run release:inspect -- --target local|repository|npm` now records a target-aware readiness report without failing, while `npm run verify:candidate -- --target TARGET` applies the same checks as a strict gate. A complete temporary npm candidate passed; removing its license and making the root private produced the expected blockers and strict exit code 1.
 - `npm run verify:release` passed on Windows native as the single local release gate: toolchain, workspace versions, typecheck, lint across 104 files, 50 unit tests, 19 integration tests with one POSIX-only skip, 2 browser tests, clean setup, final local package, checksum, independent artifact verification, final fresh-repack comparison, exact SBOM provenance, and license-inventory generation/verification all passed. Negative evidence tests reject stale lockfiles, substituted tarball or SBOM hashes, dependency version/integrity/distribution drift, missing third-party license declarations, and changed document bytes.
 
-The current tarball was built from the current working tree, so it remains a local audit artifact until it is rebuilt from the exact commit that will be tagged. The new changelog, workspace-version and version-update tools, package-evidence/checksum writer, artifact verifier, SBOM/license evidence, readiness inspector, and version-derived assertions have only run on Windows locally; the existing three-OS evidence still applies to commit `635ad15` until the next matrix run.
+The current tarball was built from the current working tree, so it remains a local audit artifact until it is rebuilt from the exact commit that will be tagged. The package-evidence/checksum writer, artifact verifier, fresh repack, SBOM, license inventory, and their unit tests passed on all three runners at `d329d1c`. The `release:version`, `release:inspect`, `verify:candidate`, and `verify:package` commands have only been invoked on Windows locally; the matrix runs their unit or integration tests, not the commands themselves.
 
 ## Release decisions still required
 

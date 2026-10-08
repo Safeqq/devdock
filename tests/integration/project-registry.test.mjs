@@ -132,12 +132,14 @@ test("project registry persists selections without running scripts during discov
       "mark:ready",
       project.path.canonicalPath,
       process.platform === "win32"
-        ? { Path: "C:\\portable-path", PATH: "C:\\wrong-case" }
+        ? { Path: "C:\\portable-path", PATH: "C:\\wrong-case", SYSTEMROOT: "C:\\Windows" }
         : { PATH: "/portable-path", Path: "/wrong-case" },
     );
     if (process.platform === "win32") {
       assert.equal(casingPlan.env.Path.endsWith(";C:\\portable-path"), true);
       assert.equal(Object.hasOwn(casingPlan.env, "PATH"), false);
+      assert.equal(casingPlan.env.SystemRoot, "C:\\Windows");
+      assert.equal(Object.hasOwn(casingPlan.env, "SYSTEMROOT"), false);
     } else {
       assert.equal(casingPlan.env.PATH.endsWith(":/portable-path"), true);
       assert.equal(Object.hasOwn(casingPlan.env, "Path"), false);

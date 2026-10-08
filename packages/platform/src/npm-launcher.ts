@@ -68,6 +68,15 @@ function environmentValue(environment: Readonly<Record<string, string>>, key: st
   return matchingKey === undefined ? "" : (environment[matchingKey] ?? "");
 }
 
+// Windows variable names are case-insensitive, but a copied environment object is not:
+// shells such as Git Bash pass `SYSTEMROOT`, and Node.js cannot start without it.
+function sourceValue(sourceEnv: NodeJS.ProcessEnv, key: string): string | undefined {
+  if (process.platform !== "win32") return sourceEnv[key];
+  return Object.entries(sourceEnv).find(
+    ([candidate]) => candidate.toLowerCase() === key.toLowerCase(),
+  )?.[1];
+}
+
 export class NpmLauncher {
   readonly #nodeExecutable: string;
   readonly #npmCliPath: string;
@@ -119,15 +128,11 @@ export class NpmLauncher {
     }
     const env: Record<string, string> = {};
     for (const key of inheritedKeys) {
-      const value = sourceEnv[key];
+      const value = sourceValue(sourceEnv, key);
       if (value !== undefined) setEnvironmentValue(env, key, value);
     }
     const pathKey = process.platform === "win32" ? "Path" : "PATH";
-    const sourcePath =
-      process.platform === "win32"
-        ? (Object.entries(sourceEnv).find(([key]) => key.toLowerCase() === "path")?.[1] ?? "")
-        : (sourceEnv.PATH ?? "");
-    setEnvironmentValue(env, pathKey, sourcePath);
+    setEnvironmentValue(env, pathKey, sourceValue(sourceEnv, pathKey) ?? "");
     for (const [key, value] of Object.entries(projectEnv)) {
       setEnvironmentValue(env, key, value);
     }

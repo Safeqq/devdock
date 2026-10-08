@@ -10,7 +10,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "node ../../scripts/clean-build-output.mjs && tsc -p tsconfig.json"
   },
   "dependencies": {
     "@devdock/contracts": "0.0.0",

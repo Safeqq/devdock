@@ -34,4 +34,5 @@ All notable changes to DevDock will be documented in this file.
 - Output queues, log retention, rendered rows, SSE clients, retries, timeouts, and cleanup paths all have explicit bounds.
 - Native Windows, macOS, and Linux gates exercise build, typecheck, lint, unit, integration, installed-package, and browser behavior.
 - Workspace builds clear previous compiler output first, so outputs from deleted sources can no longer end up in the bundled package.
+- The packaged CLI no longer bundles React, ReactDOM, or `scheduler`; the dashboard ships as prebuilt static files, which shrinks the tarball by 85 entries and about 8.3 MB unpacked.
 - On Windows, launch environments resolve allowlisted variables case-insensitively, so a copied environment containing `SYSTEMROOT` still gives services the `SystemRoot` that Node.js needs to start.

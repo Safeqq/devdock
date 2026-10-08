@@ -3,13 +3,24 @@ import { spawn } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { createInterface } from "node:readline";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { NpmLauncher } from "../../packages/platform/dist/index.js";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
+
+// Reports each finished phase immediately: diagnostics emitted before a test timeout are
+// still printed, so a slow CI runner shows the last step that completed.
+function stepTimer(t) {
+  let last = performance.now();
+  return (label) => {
+    const now = performance.now();
+    t.diagnostic(`step ${label}: ${Math.round(now - last)} ms`);
+    last = now;
+  };
+}
 
 function hasExited(child) {
   return child.exitCode !== null || child.signalCode !== null;
@@ -37,6 +48,8 @@ function runNode(
   expectedCode = 0,
   outputLimitBytes = 64 * 1_024,
 ) {
+  // Name the script and its first argument without the temporary paths that follow.
+  const command = [basename(args[0]), ...args.slice(1, 2)].join(" ");
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, args, {
       ...options,
@@ -48,7 +61,7 @@ function runNode(
     let stderr = "";
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
-      reject(new Error(`Command timed out: ${stderr.slice(-4_096)}`));
+      reject(new Error(`${command} timed out after ${timeoutMs} ms: ${stderr.slice(-4_096)}`));
     }, timeoutMs);
     child.stdout.on("data", (chunk) => {
       stdout = (stdout + chunk.toString("utf8")).slice(-outputLimitBytes);
@@ -63,7 +76,7 @@ function runNode(
     child.once("close", (code) => {
       clearTimeout(timer);
       if (code === expectedCode) resolve({ stdout, stderr });
-      else reject(new Error(`Command exited with code ${code}: ${stderr.slice(-4_096)}`));
+      else reject(new Error(`${command} exited with code ${code}: ${stderr.slice(-4_096)}`));
     });
   });
 }
@@ -111,7 +124,8 @@ function waitForReady(child, lines, timeoutMs) {
 
 test("packed CLI runs from a clean local install and closes through the native OS path", {
   timeout: 300_000,
-}, async () => {
+}, async (t) => {
+  const step = stepTimer(t);
   const packageMetadata = JSON.parse(await readFile(join(repositoryRoot, "package.json"), "utf8"));
   assert.equal(packageMetadata.name, "devdock");
   assert.equal(typeof packageMetadata.version, "string");
@@ -154,6 +168,7 @@ test("packed CLI runs from a clean local install and closes through the native O
       0,
       512 * 1_024,
     );
+    step("npm pack");
     const packReports = JSON.parse(packResult.stdout);
     assert.equal(Array.isArray(packReports), true);
     assert.equal(packReports.length, 1);
@@ -202,6 +217,7 @@ test("packed CLI runs from a clean local install and closes through the native O
       ],
       { cwd: installDirectory },
     );
+    step("npm install");
 
     const entry = join(installDirectory, "node_modules", "devdock", "bin", "devdock.mjs");
     await access(entry);
@@ -250,6 +266,7 @@ test("packed CLI runs from a clean local install and closes through the native O
     assert.equal(invalidResult.stdout, "");
     assert.match(invalidResult.stderr, /^Unknown option: --unknown/);
     await assert.rejects(access(databasePath), { code: "ENOENT" });
+    step("version, help, and invalid option");
 
     // POSIX exercises npm's executable bit and shebang. Windows launches the entry directly so
     // the IPC shutdown message reaches DevDock instead of the intermediate cmd.exe process.
@@ -271,6 +288,7 @@ test("packed CLI runs from a clean local install and closes through the native O
       stderr = (stderr + chunk.toString("utf8")).slice(-4_096);
     });
     const ready = await waitForReady(child, lines, 10_000);
+    step("daemon ready");
     const page = await fetch(ready.origin, { signal: AbortSignal.timeout(3_000) });
     assert.equal(page.status, 200);
     assert.equal((await page.text()).includes(ready.pairingCode), false);
@@ -281,6 +299,7 @@ test("packed CLI runs from a clean local install and closes through the native O
       signal: AbortSignal.timeout(3_000),
     });
     assert.equal(paired.status, 200);
+    step("pair");
 
     if (process.platform === "win32") {
       await new Promise((resolve, reject) => {
@@ -292,6 +311,7 @@ test("packed CLI runs from a clean local install and closes through the native O
     const result = await waitForExit(child, 10_000);
     assert.equal(result.code, 0, stderr);
     await access(databasePath);
+    step("shutdown");
   } finally {
     if (child !== undefined && !hasExited(child)) {
       child.kill("SIGKILL");

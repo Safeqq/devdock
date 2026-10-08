@@ -11,14 +11,14 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@devdock/contracts": "0.0.0",
-    "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "@devdock/contracts": "0.0.0"
   },
   "devDependencies": {
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
     "typescript": "6.0.3",
     "vite": "8.3.0"
   }

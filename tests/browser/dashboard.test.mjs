@@ -26,20 +26,14 @@ function cleanupRoot(path, prefix) {
   return root;
 }
 
-// Records how long each phase took so a slow CI runner shows where the time went,
-// including when a step fails before the test finishes.
+// Reports each finished phase immediately: diagnostics emitted before a test timeout are
+// still printed, so a slow CI runner shows the last step that completed.
 function stepTimer(t) {
-  const timings = [];
   let last = performance.now();
-  return {
-    mark(label) {
-      const now = performance.now();
-      timings.push(`${label} ${Math.round(now - last)}ms`);
-      last = now;
-    },
-    report() {
-      if (timings.length > 0) t.diagnostic(`step timings: ${timings.join(", ")}`);
-    },
+  return (label) => {
+    const now = performance.now();
+    t.diagnostic(`step ${label}: ${Math.round(now - last)} ms`);
+    last = now;
   };
 }
 
@@ -113,7 +107,7 @@ test("browser pairs and manages project configuration without executing a script
   // Ubuntu CI routinely needs 23-31 s for this test; 35 s left too little margin.
   timeout: 60_000,
 }, async (t) => {
-  const steps = stepTimer(t);
+  const step = stepTimer(t);
   const tempRoot = await mkdtemp(join(tmpdir(), "devdock-browser-"));
   const safeRoot = cleanupRoot(tempRoot, "devdock-browser-");
   const projectPath = join(tempRoot, "browser café & [project]");
@@ -142,15 +136,16 @@ test("browser pairs and manages project configuration without executing a script
       webRoot: fileURLToPath(new URL("../../apps/web/dist/", import.meta.url)),
     });
     const origin = await api.listen(0);
-    steps.mark("setup");
+    step("setup");
     browser = await chromium.launch({ executablePath: await browserExecutable(), headless: true });
+    step("browser launch");
     const context = await browser.newContext();
     // Below the test timeout so a stuck step fails with its locator instead of a bare timeout.
     context.setDefaultTimeout(15_000);
     const page = await context.newPage();
     const pageErrors = [];
     page.on("pageerror", (error) => pageErrors.push(error.message));
-    steps.mark("browser launch");
+    step("browser context");
 
     await page.goto(origin);
     await page.getByRole("heading", { name: "Pair this browser" }).waitFor();
@@ -158,12 +153,12 @@ test("browser pairs and manages project configuration without executing a script
     await page.getByLabel("Pairing code").fill(api.pairingCode);
     await page.getByRole("button", { name: "Pair browser" }).click();
     await page.getByRole("heading", { name: "Projects" }).waitFor();
-    steps.mark("pair");
+    step("pair");
     await page.getByLabel("Folder path").fill(projectPath);
     await page.getByLabel("Display name (optional)").fill("Browser Fixture");
     await page.getByRole("button", { name: "Add project" }).click();
     await page.getByRole("heading", { name: "Browser Fixture" }).waitFor();
-    steps.mark("register project");
+    step("register project");
     await page.getByLabel("App port (optional)").fill("4300");
     await page.getByLabel("Environment files (optional)").fill(".env.browser");
     await page.getByLabel("Required environment keys (optional)").fill("BROWSER_TOKEN");
@@ -173,7 +168,7 @@ test("browser pairs and manages project configuration without executing a script
     await page.getByLabel("Maximum backoff (ms)").fill("1000");
     await page.getByRole("button", { name: "Add service" }).click();
     await page.getByRole("heading", { name: "dev" }).waitFor();
-    steps.mark("add service");
+    step("add service");
     const profileForm = page.locator("form.profile-form");
     await profileForm.getByLabel("Profile name").fill("Backend Only");
     await profileForm.getByLabel("dev", { exact: true }).check();
@@ -181,7 +176,7 @@ test("browser pairs and manages project configuration without executing a script
     const profileCard = page.locator("article.profile-card").filter({ hasText: "Backend Only" });
     await profileCard.getByRole("heading", { name: "Backend Only" }).waitFor();
     await profileCard.locator(".state-pill").getByText("Idle", { exact: true }).waitFor();
-    steps.mark("create profile");
+    step("create profile");
     const serviceCard = page.locator("article.service-card").filter({ hasText: "npm run dev" });
     await serviceCard.getByText("restart up to 2 times", { exact: false }).waitFor();
     await serviceCard.getByRole("button", { name: "Run dev diagnostics" }).click();
@@ -193,7 +188,7 @@ test("browser pairs and manages project configuration without executing a script
       (await diagnostics.textContent()).includes("browser-secret-must-not-render"),
       false,
     );
-    steps.mark("diagnostics");
+    step("diagnostics");
     const [download] = await Promise.all([
       page.waitForEvent("download"),
       page.getByRole("link", { name: "Export configuration" }).click(),
@@ -209,14 +204,14 @@ test("browser pairs and manages project configuration without executing a script
     assert.deepEqual(exported.services[0].envFiles, [".env.browser"]);
     assert.deepEqual(exported.services[0].requiredEnvKeys, ["BROWSER_TOKEN"]);
     assert.deepEqual(exported.profiles[0].services, [{ serviceRef: "service-1", dependsOn: [] }]);
-    steps.mark("export");
+    step("export");
     await page.getByRole("button", { name: "View command" }).click();
     await page.locator(".preview pre").getByText(/"cwd"/u).waitFor();
     await page.getByRole("button", { name: "Prepare Open App" }).click();
     const openApp = page.getByRole("link", { name: /Open App/u });
     await openApp.waitFor();
     assert.equal(await openApp.getAttribute("href"), "http://127.0.0.1:4300/");
-    steps.mark("preview and open app");
+    step("preview and open app");
     await assert.rejects(access(markerPath));
 
     await page.reload();
@@ -224,14 +219,13 @@ test("browser pairs and manages project configuration without executing a script
     const unpairedPage = await (await browser.newContext()).newPage();
     await unpairedPage.goto(origin);
     await unpairedPage.getByRole("heading", { name: "Pair this browser" }).waitFor();
-    steps.mark("reload and unpaired context");
+    step("reload and unpaired context");
     await page.getByRole("button", { name: "Archive" }).click();
     await page.getByText("No projects yet.").waitFor();
-    steps.mark("archive");
+    step("archive");
     await access(join(projectPath, "package.json"));
     assert.deepEqual(pageErrors, []);
   } finally {
-    steps.report();
     await browser?.close();
     await api?.close();
     store?.close();

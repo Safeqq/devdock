@@ -75,6 +75,10 @@ Generate `artifacts/devdock-0.1.0.licenses.json` with `npm run package:licenses`
 npm install --ignore-scripts --no-audit --no-fund --prefix ./devdock-local ./artifacts/devdock-0.1.0.tgz
 ```
 
+The prefix can be any user-writable folder; it does not need to be inside a project, and DevDock can register projects anywhere on disk. A folder outside source repositories, such as `%USERPROFILE%\tools\devdock` on Windows, keeps the installed files out of version control; this repository already ignores `devdock-local/`. Installing a release downloaded from GitHub works the same way with the tarball's path in place of `./artifacts/...`.
+
+With a Node.js or npm version other than the pinned 24.21.0 and 11.19.0, npm prints an `EBADENGINE` warning and still installs; older Node.js 24 releases such as 24.11.1 also print an `ExperimentalWarning` for SQLite at startup. Windows PowerShell 5.1 shows these stderr warnings in red as `NativeCommandError`, but the install succeeded if npm ends with `added 1 package`, and the daemon is running once it prints its `registry-api-ready` line. Only the pinned versions are verified.
+
 npm creates the command under `devdock-local/node_modules/.bin`. Launch it from PowerShell with:
 
 ```powershell

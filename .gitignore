@@ -4,6 +4,7 @@ dist/
 coverage/
 artifacts/*
 !artifacts/.gitkeep
+devdock-local/
 .env
 .env.*
 !.env.example

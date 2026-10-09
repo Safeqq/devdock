@@ -112,6 +112,17 @@ The date is optional and defaults to the current UTC date. The command updates t
 
 Inspect remaining decisions with `npm run release:inspect -- --target local`, replacing `local` with `repository` or `npm` for stricter public metadata checks. The command writes an ignored, non-secret `artifacts/release-readiness-latest.json` report and exits successfully even when it finds blockers. Run `npm run verify:candidate -- --target TARGET` when the selected target should be complete; strict mode exits with code 1 while any blocker remains. Neither command creates a tag, changes package privacy, or publishes an artifact.
 
+## Desktop app (in development)
+
+DevDock is becoming a Windows desktop app built with Tauri v2: the window runs the dashboard, starts the daemon as a hidden sidecar, and pairs automatically, so no browser, URL, or pairing code is involved. It is a development build for now; an installer is planned (see [docs/desktop-plan.md](docs/desktop-plan.md)).
+
+Building it requires Rust and the Visual Studio Build Tools workload "Desktop development with C++". Then:
+
+```text
+npm run desktop:run      # build the daemon and the desktop shell, then open the app
+npm run desktop:verify   # launch it with isolated data and check pairing, permissions, a real service, and shutdown
+```
+
 ## Fixture control
 
 Run `npm run fixture:control` on native Windows, macOS, or Linux, then type `start`, `inspect`, `stop`, `restart`, or `exit`, pressing Enter after each command. The CLI prints JSON events. `start` launches the HTTP fixture and prints its run ID and PID; a second `start` reuses the same run. The fixture prints its listening port. `inspect` reports process status, ownership, and readiness separately. `restart` waits for the old run to close before assigning a new run ID. `stop` asks the fixture to shut down over Node IPC and waits for process and stdio closure. `exit` also stops a running fixture.

@@ -118,6 +118,20 @@ Asumsi berikut belum terbukti dan bisa mengubah desain:
 3. Helper Job Object (PowerShell/C#) tetap berjalan ketika daemon diluncurkan sebagai sidecar tanpa konsol.
 4. Ukuran installer dengan Node dibundel. Perkiraan 40–60 MB, perlu diukur.
 
+## Hasil spike D1 (2026-10-09, Windows 11 x64)
+
+1. **Capability untuk halaman daemon: terbukti.** Shell membuat capability saat runtime (`CapabilityBuilder`, fitur `dynamic-acl` bawaan Tauri) untuk origin daemon yang persis (`http://127.0.0.1:<port>/*`), hanya untuk jendela `main`, dengan izin `core:default` dan `dialog:allow-open`. Dialog folder native terbuka dari halaman daemon, sedangkan `dialog:save` yang tidak diberikan ditolak dengan pesan "not allowed". CSP daemon tidak perlu dilonggarkan: Tauri otomatis beralih dari IPC protokol khusus ke `postMessage` ketika `connect-src 'self'` memblokirnya.
+2. **Initialization script: terbukti.** Kode pairing disuntikkan sebagai `window.__DEVDOCK_DESKTOP__` sebelum skrip halaman berjalan; jendela masuk ke dashboard sekitar 1,4 detik setelah aplikasi dibuka tanpa formulir pairing, dan kode terhapus dari halaman setelah dipakai.
+3. **Helper Job Object sebagai sidecar tanpa konsol: terbukti.** Daemon dijalankan dengan `CREATE_NO_WINDOW`; service npm nyata mencapai `running/ready`, menjawab HTTP, lalu Stop menutup seluruh pohon prosesnya.
+4. **Ukuran installer: belum diukur.** Pengukuran memerlukan Node yang dibundel dan dipindahkan ke D4.
+
+Keputusan tambahan dari spike:
+
+- Jendela hanya boleh menavigasi di origin daemon; navigasi lain diblokir (tautan Open App akan memakai browser default di D3).
+- `apps/desktop` adalah crate Rust, bukan workspace npm. Sebagai workspace, ia sempat ikut masuk SBOM produksi paket CLI dan membuat `verify:release` gagal; `@tauri-apps/cli` kini devDependency root.
+- Versi di `Cargo.toml` dan `tauri.conf.json` (0.1.0) belum diperiksa oleh `check:versions`/`release:version`; sinkronisasinya masuk D4.
+- Menutup jendela saat ini langsung keluar dari aplikasi dan menghentikan daemon dengan rapi; tray dan tutup-ke-tray adalah D2.
+
 ## Keputusan atas pertanyaan terbuka (disetujui 2026-10-09)
 
 1. **Node untuk menjalankan proyek.** DevDock memakai Node/npm yang terpasang di komputer (ditemukan dari PATH) bila ada, dan Node bawaan DevDock bila tidak ada. Node yang dipakai harus terlihat oleh pengguna.
@@ -130,9 +144,9 @@ Setiap tahap diakhiri verifikasi, lalu commit dan push.
 
 | Tahap | Isi | Bukti selesai |
 |---|---|---|
-| D0 | Prasyarat: pengguna memasang Visual Studio Build Tools (Desktop development with C++). `AGENT.md` diperbarui: desktop wrapper masuk cakupan, target Windows dulu | `cargo build` contoh Tauri berhasil di mesin lokal |
+| D0 ✅ | Prasyarat: pengguna memasang Visual Studio Build Tools (Desktop development with C++). `AGENT.md` diperbarui: desktop wrapper masuk cakupan, target Windows dulu | `cargo build` contoh Tauri berhasil di mesin lokal |
 | D1a ✅ | Persiapan daemon yang tidak memerlukan Rust: pemilihan Node dari PATH dengan cadangan Node bawaan, kunci satu instance per database, sidecar berhenti bila pipa induk tertutup, dan pairing otomatis dari nilai yang disuntikkan shell | Unit/integration test baru lulus; suite tiga OS tetap lulus |
-| D1 | Spike: shell Tauri menjalankan sidecar, pairing otomatis, jendela menampilkan dashboard yang ada, dialog folder berfungsi | Demo lokal Windows; keempat asumsi di atas terjawab |
+| D1 ✅ | Spike: shell Tauri menjalankan sidecar, pairing otomatis, jendela menampilkan dashboard yang ada, dialog folder berfungsi | Demo lokal Windows; keempat asumsi di atas terjawab |
 | D2 | Siklus hidup: tray, tutup ke tray, Keluar dengan shutdown rapi, single-instance, sidecar mati bila shell hilang, layar error bila sidecar gagal | Test otomatis: Keluar menghentikan service; kill shell tidak meninggalkan proses |
 | D3 | UX desktop: onboarding, kartu script, panel Lanjutan, Grup, log, tombol Buka, bahasa sederhana | Browser/UI test diperbarui; review tampilan oleh pengguna |
 | D4 | Packaging: Node + daemon dibundel, installer NSIS per-user, workflow CI Windows yang membangun installer lalu menginstal diam-diam, meluncurkan, dan menguninstal | Installer lulus smoke test di runner Windows; ukuran tercatat |

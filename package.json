@@ -36,7 +36,7 @@
     "check:toolchain": "node scripts/check-toolchain.mjs",
     "check:versions": "node scripts/check-workspace-versions.mjs",
     "typecheck": "npm run build -w @devdock/contracts && npm run build -w @devdock/platform && npm run build -w @devdock/storage && tsc --noEmit -p tsconfig.json && npm run typecheck -w @devdock/web",
-    "lint": "biome check bin apps/daemon/src apps/web/src apps/web/vite.config.ts packages/contracts/src packages/platform/src packages/storage/src scripts tests package.json biome.json tsconfig.json apps/daemon/package.json apps/daemon/tsconfig.json apps/web/package.json apps/web/tsconfig.json packages/contracts/package.json packages/platform/package.json packages/storage/package.json packages/contracts/tsconfig.json packages/platform/tsconfig.json packages/storage/tsconfig.json",
+    "lint": "biome check bin apps/daemon/src apps/web/src apps/web/vite.config.ts apps/desktop/assets packages/contracts/src packages/platform/src packages/storage/src scripts tests package.json biome.json tsconfig.json apps/daemon/package.json apps/daemon/tsconfig.json apps/web/package.json apps/web/tsconfig.json packages/contracts/package.json packages/platform/package.json packages/storage/package.json packages/contracts/tsconfig.json packages/platform/tsconfig.json packages/storage/tsconfig.json",
     "test:unit": "npm run build && node scripts/run-tests.mjs unit",
     "test:integration": "npm run build && node scripts/run-tests.mjs integration",
     "test:browser": "npm run build && node scripts/run-tests.mjs browser",
@@ -63,13 +63,17 @@
     "fixture:tree": "node tests/fixtures/tree-parent.mjs",
     "fixture:control": "npm run build && node apps/daemon/dist/cli.js",
     "api:auth": "npm run build && node apps/daemon/dist/api-cli.js",
-    "api:registry": "npm run build && node apps/daemon/dist/registry-api-cli.js"
+    "api:registry": "npm run build && node apps/daemon/dist/registry-api-cli.js",
+    "desktop:build": "npm run build && cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml",
+    "desktop:run": "npm run desktop:build && node scripts/run-desktop.mjs",
+    "desktop:verify": "npm run desktop:build && node scripts/verify-desktop-shell.mjs apps/desktop/src-tauri/target/debug/devdock-desktop.exe"
   },
   "dependencies": {
     "@devdock/daemon": "0.1.0"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
+    "@tauri-apps/cli": "2.12.1",
     "@types/node": "24.19.0",
     "playwright-core": "1.63.0",
     "typescript": "6.0.3"

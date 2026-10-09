@@ -81,3 +81,19 @@ The packaged registry CLI handles SIGINT and SIGTERM on every target OS and SIGH
 When a run log buffer is registered with the API, `GET /api/events?runId=<uuid>` replays its retained log events, then follows new events on the same connection. `after=<sequence>` supplies an initial cursor; an SSE `Last-Event-ID` header takes precedence on reconnect. Each `log` event has an integer SSE ID and a runtime-validated JSON envelope with daemon session ID, run ID, sequence, timestamp, stream, and text. If the cursor predates the retained buffer, the server first sends a `gap` event describing the oldest and latest retained sequences. Invalid or future cursors return 400; an unknown run ID returns 404. This route uses the same session and Host/Origin checks as the rest of the API.
 
 The server keeps no separate application-level queue for a viewer. If an HTTP write signals backpressure, that SSE connection closes after its buffered output; a reconnect can replay retained events or receive a gap marker if they have been evicted. Log capture continues without a viewer. `ServiceRuntimeManager` registers real npm stdout/stderr before the Start response is returned. When the run-buffer collection exceeds 50 entries, it evicts the oldest completed buffers while preserving active runs. The dashboard opens one EventSource for the selected service, validates every log/gap envelope, renders at most 500 recent rows, reports connecting/live/disconnected state, and closes the EventSource when selection changes or the page unmounts. Browser and API gates exercise reconnect after `Last-Event-ID`, retained-buffer gaps, and a real npm run producing more rows than the UI limit. One SSE connection currently selects one run; multiplexing across services remains unnecessary for the current UI.
+
+## Desktop sidecar control (8.x increment)
+
+The registry daemon's ready line is `{"type":"registry-api-ready","origin":"...","pairingCode":"...","projectNode":{"source":"path"|"daemon","executable":"..."}}`.
+
+When started with `DEVDOCK_CONTROL=stdin`, as the desktop shell does, the daemon reads JSON lines of at most 1,024 characters from stdin:
+
+| Line | Effect |
+| --- | --- |
+| `{"type":"issue-pairing-code"}` | Replaces the pairing code and prints `{"type":"pairing-code","pairingCode":"..."}`. The new code has the normal five-minute lifetime and attempt limit; the previous code stops working; an existing session stays valid until a successful pairing replaces it. |
+| `{"type":"shutdown"}` | Starts the same graceful shutdown as SIGINT, SIGTERM, or the Node IPC `shutdown` message. |
+| End of input | The parent closed the pipe or exited, including a crash; the daemon shuts down gracefully instead of running without an owner. |
+
+Other lines are ignored. Only the parent process holds the pipe, so this channel adds no network-reachable way to obtain a pairing code.
+
+The dashboard also accepts a pairing code injected by the desktop shell as `window.__DEVDOCK_DESKTOP__.pairingCode` through a webview initialization script. When `GET /api/session` returns 401, the page removes that value and submits it to `POST /api/pair`; if pairing fails, it shows the normal pairing form. The code never appears in a URL, browser history, or storage.

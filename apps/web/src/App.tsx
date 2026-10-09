@@ -29,6 +29,23 @@ type SessionState =
   | { kind: "ready"; csrfToken: string }
   | { kind: "error"; message: string };
 
+declare global {
+  interface Window {
+    // Set by the desktop shell's initialization script; never part of a URL or stored on disk.
+    __DEVDOCK_DESKTOP__?: { pairingCode?: string };
+  }
+}
+
+// Reads the single-use pairing code injected by the desktop shell and removes it, so it is
+// gone from the page once used and a reload cannot replay it.
+function takeDesktopPairingCode(): string | null {
+  const desktop = window.__DEVDOCK_DESKTOP__;
+  if (desktop === undefined) return null;
+  const code = desktop.pairingCode;
+  delete desktop.pairingCode;
+  return typeof code === "string" && code.length > 0 ? code : null;
+}
+
 function errorMessage(caught: unknown): string {
   if (caught instanceof ApiError) return `${caught.code}: ${caught.message}`;
   return "Connection failed. Check that DevDock is running, then try again.";
@@ -935,8 +952,27 @@ export function App() {
       })
       .catch((caught: unknown) => {
         if (controller.signal.aborted) return;
-        if (caught instanceof ApiError && caught.status === 401) setSession({ kind: "pairing" });
-        else setSession({ kind: "error", message: errorMessage(caught) });
+        if (!(caught instanceof ApiError && caught.status === 401)) {
+          setSession({ kind: "error", message: errorMessage(caught) });
+          return;
+        }
+        const desktopCode = takeDesktopPairingCode();
+        if (desktopCode === null) {
+          setSession({ kind: "pairing" });
+          return;
+        }
+        // A rejected desktop code falls back to the manual pairing form.
+        void apiPost("/api/pair", { code: desktopCode }, (value) =>
+          SessionResponseSchema.parse(value),
+        )
+          .then((paired) => {
+            if (!controller.signal.aborted) {
+              setSession({ kind: "ready", csrfToken: paired.csrfToken });
+            }
+          })
+          .catch(() => {
+            if (!controller.signal.aborted) setSession({ kind: "pairing" });
+          });
       });
     return () => controller.abort();
   }, []);

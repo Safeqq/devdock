@@ -108,6 +108,58 @@ function migrate(db: DatabaseSync): void {
   }
 }
 
+export class InstanceLockError extends Error {
+  readonly code = "INSTANCE_LOCKED";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "InstanceLockError";
+  }
+}
+
+function isSqliteBusy(caught: unknown): boolean {
+  if (caught === null || typeof caught !== "object" || !("errcode" in caught)) return false;
+  // SQLITE_BUSY (5) or SQLITE_LOCKED (6): another connection holds the lock.
+  return caught.errcode === 5 || caught.errcode === 6;
+}
+
+// Holds an exclusive SQLite file lock for as long as the daemon runs, so only one DevDock
+// instance manages a data directory. The operating system releases the lock when the process
+// exits for any reason, so a crash cannot leave a stale lock behind.
+export class InstanceLock {
+  #db: DatabaseSync | undefined;
+
+  private constructor(db: DatabaseSync) {
+    this.#db = db;
+  }
+
+  static async acquire(path: string): Promise<InstanceLock> {
+    const lockPath = resolve(path);
+    await mkdir(dirname(lockPath), { recursive: true });
+    const db = new DatabaseSync(lockPath, { timeout: 0, allowExtension: false });
+    try {
+      db.exec("PRAGMA locking_mode = EXCLUSIVE");
+      db.exec("PRAGMA journal_mode = MEMORY");
+      db.exec("BEGIN EXCLUSIVE");
+      db.exec("COMMIT");
+      return new InstanceLock(db);
+    } catch (caught) {
+      db.close();
+      if (isSqliteBusy(caught)) {
+        throw new InstanceLockError(
+          "Another DevDock instance is already using this data directory",
+        );
+      }
+      throw caught;
+    }
+  }
+
+  release(): void {
+    this.#db?.close();
+    this.#db = undefined;
+  }
+}
+
 export class RegistryDatabase {
   readonly #db: DatabaseSync;
 

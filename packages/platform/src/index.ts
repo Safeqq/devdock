@@ -3,7 +3,7 @@ export {
   WindowsFixtureProcessAdapter,
 } from "./cooperative-fixture-adapter.js";
 export * from "./data-directory.js";
-export { NpmLauncher, NpmLauncherError } from "./npm-launcher.js";
+export { type NodeSource, NpmLauncher, NpmLauncherError } from "./npm-launcher.js";
 export {
   createPlatformProcessAdapter,
   productionProcessControlAvailable,

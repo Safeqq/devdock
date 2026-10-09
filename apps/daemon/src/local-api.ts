@@ -138,8 +138,8 @@ export function createLocalApiServer(options: LocalApiOptions = {}) {
     trustProxy: false,
     forceCloseConnections: true,
   });
-  const pairingCode = randomToken(16);
-  const pairingExpiresAt = now() + PAIRING_TTL_MS;
+  let pairingCode = randomToken(16);
+  let pairingExpiresAt = now() + PAIRING_TTL_MS;
   let failedPairingAttempts = 0;
   let pairingUsed = false;
   let session: Session | null = null;
@@ -387,7 +387,19 @@ export function createLocalApiServer(options: LocalApiOptions = {}) {
   }
 
   return {
-    pairingCode,
+    get pairingCode() {
+      return pairingCode;
+    },
+    // Replaces the pairing code for a trusted parent process, such as the desktop shell, whose
+    // window needs a new session after the previous code was used or the session expired. The
+    // existing session stays valid until a successful pairing replaces it.
+    issuePairingCode: () => {
+      pairingCode = randomToken(16);
+      pairingExpiresAt = now() + PAIRING_TTL_MS;
+      failedPairingAttempts = 0;
+      pairingUsed = false;
+      return pairingCode;
+    },
     listen: (port: number) => app.listen({ host: "127.0.0.1", port }),
     close: () => app.close(),
   };

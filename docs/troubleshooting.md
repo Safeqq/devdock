@@ -44,7 +44,7 @@ The Windows production adapter intentionally reports graceful stop as unsupporte
 
 ## The SQLite database needs inspection or backup
 
-Stop DevDock first, then back up `registry.sqlite` together with any `-wal` and `-shm` files present in the same data directory. The default directory is `%LOCALAPPDATA%\DevDock` on Windows, `~/Library/Application Support/DevDock` on macOS, and `${XDG_DATA_HOME:-~/.local/share}/devdock` on Linux. Do not edit applied migrations or copy a live main database file without its WAL state.
+Stop DevDock first, then back up `registry.sqlite` together with any `-wal` and `-shm` files present in the same data directory. `instance.lock` only marks the running daemon and does not need a backup. The default directory is `%LOCALAPPDATA%\DevDock` on Windows, `~/Library/Application Support/DevDock` on macOS, and `${XDG_DATA_HOME:-~/.local/share}/devdock` on Linux. Do not edit applied migrations or copy a live main database file without its WAL state.
 
 ## A clean package installation is slow on Windows
 

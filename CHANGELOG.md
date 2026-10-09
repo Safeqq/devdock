@@ -4,6 +4,16 @@ All notable changes to DevDock will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- A stdin control channel for running the daemon as a desktop sidecar: a parent can request shutdown or a fresh pairing code, and the daemon shuts down when the parent's pipe closes or the parent crashes.
+- Automatic dashboard pairing from a code injected by the desktop shell, without the pairing form or a code in the URL.
+- A single-instance lock per data directory, so the desktop app and CLI cannot manage the same services at once.
+
+### Changed
+
+- Projects now run with the first Node.js and npm found on the user's `PATH`, falling back to the Node.js running DevDock; the ready event reports which one is used.
+
 ## 0.1.0 - 2026-10-09
 
 ### Added

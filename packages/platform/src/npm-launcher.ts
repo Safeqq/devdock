@@ -1,4 +1,5 @@
-import { realpath, stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, realpath, stat } from "node:fs/promises";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import type { SpawnRequest } from "./process-adapter.js";
 
@@ -77,16 +78,70 @@ function sourceValue(sourceEnv: NodeJS.ProcessEnv, key: string): string | undefi
   )?.[1];
 }
 
+// "path" is a Node.js installation found on the user's PATH; "daemon" is the Node.js that runs
+// DevDock itself, used when no usable installation is on PATH.
+export type NodeSource = "path" | "daemon";
+
+// Lists node executables in PATH order. Relative and empty entries are skipped so a project's
+// working directory can never supply the interpreter.
+async function nodeCandidatesOnPath(sourceEnv: NodeJS.ProcessEnv): Promise<string[]> {
+  const pathValue = sourceValue(sourceEnv, process.platform === "win32" ? "Path" : "PATH") ?? "";
+  const name = process.platform === "win32" ? "node.exe" : "node";
+  const candidates: string[] = [];
+  for (const rawEntry of pathValue.split(delimiter)) {
+    const entry = rawEntry.trim().replace(/^"(.*)"$/u, "$1");
+    if (entry === "" || !isAbsolute(entry)) continue;
+    const candidate = join(entry, name);
+    try {
+      if (!(await stat(candidate)).isFile()) continue;
+      if (process.platform !== "win32") await access(candidate, constants.X_OK);
+      candidates.push(candidate);
+    } catch {
+      // Not present or not executable in this PATH entry.
+    }
+  }
+  return candidates;
+}
+
 export class NpmLauncher {
   readonly #nodeExecutable: string;
   readonly #npmCliPath: string;
+  readonly #nodeSource: NodeSource;
 
-  private constructor(nodeExecutable: string, npmCliPath: string) {
+  private constructor(nodeExecutable: string, npmCliPath: string, nodeSource: NodeSource) {
     this.#nodeExecutable = nodeExecutable;
     this.#npmCliPath = npmCliPath;
+    this.#nodeSource = nodeSource;
   }
 
-  static async locate(nodeExecutable = process.execPath): Promise<NpmLauncher> {
+  get nodeExecutable(): string {
+    return this.#nodeExecutable;
+  }
+
+  get nodeSource(): NodeSource {
+    return this.#nodeSource;
+  }
+
+  // Prefers the user's own Node.js and npm, so projects run with the version they expect, and
+  // falls back to the daemon's Node.js. A PATH entry is used only if npm sits beside it.
+  static async locatePreferred(
+    sourceEnv: NodeJS.ProcessEnv = process.env,
+    daemonNode = process.execPath,
+  ): Promise<NpmLauncher> {
+    for (const candidate of await nodeCandidatesOnPath(sourceEnv)) {
+      try {
+        return await NpmLauncher.locate(candidate, "path");
+      } catch {
+        // A shim or partial installation without npm; try the next PATH entry.
+      }
+    }
+    return NpmLauncher.locate(daemonNode, "daemon");
+  }
+
+  static async locate(
+    nodeExecutable = process.execPath,
+    nodeSource: NodeSource = "daemon",
+  ): Promise<NpmLauncher> {
     const executable = await realpath(nodeExecutable);
     const nodeDirectory = dirname(executable);
     const candidates = [
@@ -97,15 +152,14 @@ export class NpmLauncher {
     for (const candidate of candidates) {
       try {
         const canonical = await realpath(candidate);
-        if ((await stat(canonical)).isFile()) return new NpmLauncher(executable, canonical);
+        if ((await stat(canonical)).isFile()) {
+          return new NpmLauncher(executable, canonical, nodeSource);
+        }
       } catch {
         // Try the next distribution layout.
       }
     }
-    throw new NpmLauncherError(
-      "NPM_CLI_NOT_FOUND",
-      "The pinned Node.js installation has no npm CLI",
-    );
+    throw new NpmLauncherError("NPM_CLI_NOT_FOUND", "The Node.js installation has no npm CLI");
   }
 
   plan(

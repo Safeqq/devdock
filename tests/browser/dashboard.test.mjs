@@ -258,6 +258,58 @@ test("browser pairs and manages project configuration without executing a script
   }
 });
 
+test("desktop shell pairing code signs the window in without the pairing form", {
+  timeout: 35_000,
+}, async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "devdock-browser-desktop-"));
+  const safeRoot = cleanupRoot(tempRoot, "devdock-browser-desktop-");
+  let store;
+  let api;
+  const contexts = [];
+  try {
+    store = await RegistryDatabase.open(join(tempRoot, "data", "registry.sqlite"));
+    api = createLocalApiServer({
+      registry: new ProjectRegistry(store),
+      launcher: await NpmLauncher.locate(),
+      webRoot: fileURLToPath(new URL("../../apps/web/dist/", import.meta.url)),
+    });
+    const origin = await api.listen(0);
+    const injectCode = (code) => {
+      window.__DEVDOCK_DESKTOP__ = { pairingCode: code };
+    };
+
+    const context = await browser.newContext();
+    contexts.push(context);
+    context.setDefaultTimeout(15_000);
+    await context.addInitScript(injectCode, api.pairingCode);
+    const page = await context.newPage();
+    const pageErrors = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    await page.goto(origin);
+    await page.getByRole("heading", { name: "Projects" }).waitFor();
+    assert.equal(await page.getByLabel("Pairing code").count(), 0);
+    assert.equal(await page.evaluate(() => window.__DEVDOCK_DESKTOP__?.pairingCode), undefined);
+    // The init script injects the used code again on reload; the session cookie keeps the
+    // window signed in and the stale code is never submitted.
+    await page.reload();
+    await page.getByRole("heading", { name: "Projects" }).waitFor();
+
+    const rejected = await browser.newContext();
+    contexts.push(rejected);
+    rejected.setDefaultTimeout(15_000);
+    await rejected.addInitScript(injectCode, "not-the-current-code");
+    const fallbackPage = await rejected.newPage();
+    await fallbackPage.goto(origin);
+    await fallbackPage.getByRole("heading", { name: "Pair this browser" }).waitFor();
+    assert.deepEqual(pageErrors, []);
+  } finally {
+    await Promise.all(contexts.map((context) => context.close()));
+    await api?.close();
+    store?.close();
+    await rm(safeRoot, { recursive: true, force: true });
+  }
+});
+
 test("browser starts, follows logs, survives tab close, and stops an npm service", {
   skip: !productionProcessControlAvailable()
     ? "No production process adapter for this platform"

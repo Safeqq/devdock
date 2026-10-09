@@ -106,6 +106,8 @@ async function browserExecutable() {
 // Chrome's first launch on a fresh Ubuntu runner took 22 s, plus 8 s for its first context
 // (workflow 37820516272), while later launches took under 3 s. Both tests share one browser
 // launched and warmed here, outside their own budgets; each test still gets fresh contexts.
+// Warming only a context left the first page at 11.5 s (workflow 37879194878), so the warm-up
+// opens a page as well.
 let browser;
 let browserStartupMs;
 before(
@@ -116,7 +118,9 @@ before(
       headless: true,
       timeout: 120_000,
     });
-    await (await browser.newContext()).close();
+    const warmup = await browser.newContext();
+    await warmup.newPage();
+    await warmup.close();
     browserStartupMs = Math.round(performance.now() - started);
   },
   { timeout: 150_000 },

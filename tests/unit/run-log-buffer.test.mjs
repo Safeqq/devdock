@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
-import { RunLogBuffer } from "../../apps/daemon/dist/run-log-buffer.js";
+import { detectAppUrl, RunLogBuffer } from "../../apps/daemon/dist/run-log-buffer.js";
 import { LogEventSchema } from "../../packages/contracts/dist/index.js";
 
 const sessionId = "daemon-session";
@@ -73,6 +73,34 @@ test("long lines stay byte-bounded and control characters cannot reach the viewe
   assert.equal(text.includes("\u0000"), false);
   assert.match(text, /before/);
   assert.match(text, /after/);
+});
+
+test("colour codes are dropped whole, even when split across chunks", () => {
+  const logs = buffer();
+  logs.push("stdout", "\u001b[32mready\u001b");
+  logs.push("stdout", "[39m in \u001b]8;;http://x\u0007link\u001b]8;;\u001b\\ 4 ms\n");
+  assert.equal(logs.replay().events[0].text, "ready in link 4 ms");
+});
+
+test("the first loopback address a run prints is remembered", () => {
+  assert.equal(detectAppUrl("  ➜  Local:   http://localhost:5173/"), "http://localhost:5173/");
+  assert.equal(
+    detectAppUrl("ready on http://0.0.0.0:3000, press ctrl+c"),
+    "http://localhost:3000/",
+  );
+  assert.equal(detectAppUrl("listening (https://[::1]:8443/app)."), "https://[::1]:8443/app");
+  assert.equal(detectAppUrl("http://[::]:4000"), "http://localhost:4000/");
+  assert.equal(detectAppUrl("Network: http://192.168.1.4:5173/"), null);
+  assert.equal(detectAppUrl("http://localhost/ has no port"), null);
+  assert.equal(detectAppUrl("postgres://localhost:5432/db"), null);
+  assert.equal(detectAppUrl("http://localhost:99999/"), null);
+
+  const logs = buffer({ maxLines: 2 });
+  logs.push("stdout", "starting\n");
+  assert.equal(logs.appUrl, null);
+  logs.push("stdout", "\u001b[36mhttp://localhost:\u001b[1m5173\u001b[22m/\u001b[39m\n");
+  logs.push("stderr", "also http://127.0.0.1:9999/\nmore\nlines\n");
+  assert.equal(logs.appUrl, "http://localhost:5173/");
 });
 
 test("line and byte eviction report a replay gap without resetting sequence", () => {

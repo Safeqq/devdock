@@ -327,6 +327,18 @@ export class RegistryDatabase {
     return validated;
   }
 
+  updateService(config: ServiceConfig): ServiceConfig | null {
+    const validated = ServiceConfigSchema.parse(config);
+    const result = run(
+      this.#db,
+      "UPDATE services SET config_json = ? WHERE id = ? AND project_id = ?",
+      JSON.stringify(validated),
+      validated.id,
+      validated.projectId,
+    );
+    return Number(result.changes) === 0 ? null : validated;
+  }
+
   getService(id: string): ServiceConfig | null {
     const row = one(this.#db, "SELECT config_json FROM services WHERE id = ?", id);
     if (row === undefined) return null;

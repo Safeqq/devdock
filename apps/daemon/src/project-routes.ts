@@ -1,17 +1,24 @@
+import { execFile } from "node:child_process";
 import {
   CreateProfileRequestSchema,
+  FolderInspectionRequestSchema,
+  FolderInspectionResponseSchema,
   ProfileRuntimeStatusResponseSchema,
   ProfileStartResponseSchema,
   ProfileStopResponseSchema,
   ProjectConfigurationExportSchema,
   RegisterProjectRequestSchema,
   RegistryIdSchema,
+  RuntimeSummaryResponseSchema,
   SelectServiceRequestSchema,
   ServiceActionRequestSchema,
   ServiceDiagnosticsResponseSchema,
   ServiceRuntimeStatusResponseSchema,
   ServiceStartResponseSchema,
   ServiceStopResponseSchema,
+  type SystemInfo,
+  SystemInfoResponseSchema,
+  UpdateServiceSettingsRequestSchema,
 } from "@devdock/contracts";
 import type { NpmLauncher } from "@devdock/platform";
 import type { FastifyInstance, FastifyReply } from "fastify";
@@ -34,6 +41,23 @@ function lifecycleUnavailable(reply: FastifyReply) {
   });
 }
 
+// Asks the Node.js that runs projects for its version once; DevDock shows it so users know which
+// installation their scripts use.
+function nodeVersion(launcher: NpmLauncher): Promise<string | null> {
+  if (launcher.nodeSource === "daemon") return Promise.resolve(process.version);
+  return new Promise((resolve) => {
+    execFile(
+      launcher.nodeExecutable,
+      ["--version"],
+      { timeout: 5_000, windowsHide: true, maxBuffer: 1_024 },
+      (error, stdout) => {
+        const version = String(stdout).trim();
+        resolve(error === null && /^v\d+\.\d+\.\d+/u.test(version) ? version.slice(0, 64) : null);
+      },
+    );
+  });
+}
+
 function idFrom(params: unknown): string | null {
   if (params === null || typeof params !== "object" || !("id" in params)) return null;
   const parsed = RegistryIdSchema.safeParse(params.id);
@@ -47,6 +71,60 @@ export function registerProjectRoutes(
   runtime?: ServiceRuntimeManager,
   profileRuntime?: ProfileRuntimeManager,
 ): void {
+  let systemInfo: Promise<SystemInfo> | undefined;
+
+  // The current run's printed address, so Open App can use what the app really listens on.
+  async function currentAppUrl(serviceId: string): Promise<string | null> {
+    if (runtime === undefined) return null;
+    const { snapshot } = await runtime.status(serviceId);
+    if (
+      snapshot === null ||
+      (snapshot.processState !== "starting" && snapshot.processState !== "running")
+    ) {
+      return null;
+    }
+    return runtime.appUrl(snapshot.runId);
+  }
+
+  app.get("/api/system", async () => {
+    systemInfo ??= nodeVersion(launcher).then((version) =>
+      SystemInfoResponseSchema.parse({ projectNode: { source: launcher.nodeSource, version } }),
+    );
+    return systemInfo;
+  });
+
+  app.get("/api/runtime/summary", async () => {
+    const projects = [];
+    for (const project of registry.listProjects()) {
+      let active = 0;
+      let failed = 0;
+      if (runtime !== undefined) {
+        for (const service of registry.listServices(project.id)) {
+          const { snapshot } = await runtime.status(service.id);
+          if (snapshot === null) continue;
+          if (
+            snapshot.reconciliationState === "known" &&
+            (snapshot.processState === "starting" ||
+              snapshot.processState === "running" ||
+              snapshot.processState === "stopping")
+          ) {
+            active += 1;
+          } else if (snapshot.processState === "failed") {
+            failed += 1;
+          }
+        }
+      }
+      projects.push({ projectId: project.id, active, failed });
+    }
+    return RuntimeSummaryResponseSchema.parse({ projects });
+  });
+
+  app.post("/api/folders/inspect", async (request, reply) => {
+    const parsed = FolderInspectionRequestSchema.safeParse(request.body);
+    if (!parsed.success) return invalid(reply);
+    return FolderInspectionResponseSchema.parse(await registry.inspectFolder(parsed.data.path));
+  });
+
   app.get("/api/projects", async () => ({ projects: registry.listProjects() }));
 
   app.post("/api/projects", async (request, reply) => {
@@ -149,6 +227,21 @@ export function registerProjectRoutes(
     return reply.code(201).send({ service });
   });
 
+  app.post("/api/services/:id/settings", async (request, reply) => {
+    const id = idFrom(request.params);
+    if (id === null) return invalid(reply);
+    const parsed = UpdateServiceSettingsRequestSchema.safeParse(request.body);
+    if (!parsed.success) return invalid(reply);
+    const service = await registry.updateServiceSettings(id, {
+      ...(parsed.data.expectedPort === undefined ? {} : { expectedPort: parsed.data.expectedPort }),
+      ...(parsed.data.readiness === undefined ? {} : { readiness: parsed.data.readiness }),
+      restartPolicy: parsed.data.restartPolicy,
+      envFiles: parsed.data.envFiles,
+      requiredEnvKeys: parsed.data.requiredEnvKeys,
+    });
+    return { service };
+  });
+
   app.post("/api/projects/:id/profiles", async (request, reply) => {
     const id = idFrom(request.params);
     if (id === null) return invalid(reply);
@@ -174,7 +267,7 @@ export function registerProjectRoutes(
   app.get("/api/services/:id/open-app", async (request, reply) => {
     const id = idFrom(request.params);
     if (id === null) return invalid(reply);
-    return { url: await registry.openAppUrl(id) };
+    return { url: await registry.openAppUrl(id, await currentAppUrl(id)) };
   });
 
   app.get("/api/services/:id/diagnostics", async (request, reply) => {
@@ -187,7 +280,11 @@ export function registerProjectRoutes(
     const id = idFrom(request.params);
     if (id === null) return invalid(reply);
     if (runtime === undefined) return lifecycleUnavailable(reply);
-    return ServiceRuntimeStatusResponseSchema.parse(await runtime.status(id));
+    const inspection = await runtime.status(id);
+    return ServiceRuntimeStatusResponseSchema.parse({
+      ...inspection,
+      appUrl: inspection.snapshot === null ? null : runtime.appUrl(inspection.snapshot.runId),
+    });
   });
 
   app.post("/api/services/:id/start", async (request, reply) => {

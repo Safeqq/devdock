@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 const identifier = z.string().min(1).max(128);
+// Script commands are shown for recognition only; longer ones are shortened before they are sent.
+export const SCRIPT_COMMAND_LIMIT = 2_048;
 const timeoutMs = z.number().int().positive().max(60_000);
 const httpReadinessPath = z
   .string()
@@ -319,8 +321,25 @@ export const ScriptDiscoverySchema = z.strictObject({
   packageName: z.string().max(214).optional(),
   scriptNames: z.array(NpmScriptNameSchema),
   unsupportedScriptCount: z.number().int().nonnegative(),
+  // Supported scripts in package.json order with the command each one runs, shortened for display.
+  scripts: z.array(
+    z.strictObject({ name: NpmScriptNameSchema, command: z.string().max(SCRIPT_COMMAND_LIMIT) }),
+  ),
 });
 export type ScriptDiscovery = z.infer<typeof ScriptDiscoverySchema>;
+
+export const FolderInspectionRequestSchema = z.strictObject({
+  path: z.string().min(1).max(4_096),
+});
+
+export const FolderInspectionResponseSchema = z.strictObject({
+  folder: z.strictObject({
+    displayPath: z.string().min(1),
+    suggestedName: z.string().trim().min(1).max(128),
+  }),
+  discovery: ScriptDiscoverySchema,
+});
+export type FolderInspection = z.infer<typeof FolderInspectionResponseSchema>;
 
 export const AppSettingsSchema = z.strictObject({
   theme: z.enum(["system", "light", "dark"]).default("system"),
@@ -344,6 +363,20 @@ export const SelectServiceRequestSchema = z
     scriptName: NpmScriptNameSchema,
     cwd: z.string().min(1).max(4_096).optional(),
     displayName: z.string().trim().min(1).max(128).optional(),
+    expectedPort: z.number().int().min(1).max(65_535).optional(),
+    readiness: ReadinessProbeSchema.optional(),
+    restartPolicy: RestartPolicySchema.default({ kind: "off" }),
+    envFiles: EnvironmentFileReferencesSchema.default([]),
+    requiredEnvKeys: RequiredEnvironmentKeysSchema.default([]),
+  })
+  .refine((service) => service.readiness === undefined || service.expectedPort !== undefined, {
+    message: "expectedPort is required when readiness is configured",
+    path: ["expectedPort"],
+  });
+
+// Replaces a service's optional settings; the script and its folder stay as they were chosen.
+export const UpdateServiceSettingsRequestSchema = z
+  .strictObject({
     expectedPort: z.number().int().min(1).max(65_535).optional(),
     readiness: ReadinessProbeSchema.optional(),
     restartPolicy: RestartPolicySchema.default({ kind: "off" }),
@@ -421,7 +454,28 @@ export const ServiceActionRequestSchema = z.strictObject({});
 export const ServiceRuntimeStatusResponseSchema = z.strictObject({
   snapshot: RunSnapshotSchema.nullable(),
   ownership: z.enum(["owned", "exited", "unknown"]).nullable(),
+  // The loopback address the current run printed in its output, if any.
+  appUrl: z.url().nullable().optional(),
 });
+
+export const RuntimeSummaryResponseSchema = z.strictObject({
+  projects: z.array(
+    z.strictObject({
+      projectId: identifier,
+      active: z.number().int().nonnegative(),
+      failed: z.number().int().nonnegative(),
+    }),
+  ),
+});
+export type RuntimeSummary = z.infer<typeof RuntimeSummaryResponseSchema>;
+
+export const SystemInfoResponseSchema = z.strictObject({
+  projectNode: z.strictObject({
+    source: z.enum(["path", "daemon"]),
+    version: z.string().max(64).nullable(),
+  }),
+});
+export type SystemInfo = z.infer<typeof SystemInfoResponseSchema>;
 
 const ServiceStartOutcomeSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("started"), snapshot: RunSnapshotSchema }),

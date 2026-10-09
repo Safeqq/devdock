@@ -34,6 +34,8 @@ export interface DiscoveredPackage {
   cwd: Pick<ResolvedDirectory, "displayPath" | "canonicalPath">;
   packageName?: string;
   scriptNames: string[];
+  // Scripts in package.json order, with the command text each one runs.
+  scripts: { name: string; command: string }[];
 }
 
 function rejectNetworkPath(path: string): void {
@@ -166,7 +168,8 @@ export async function discoverPackageScripts(
   ) {
     throw new ProjectFileError("PACKAGE_SCRIPTS_INVALID", "package.json scripts must be an object");
   }
-  const scriptNames = scripts === undefined ? [] : Object.keys(scripts).sort();
+  const declared = scripts === undefined ? [] : Object.keys(scripts);
+  const scriptNames = [...declared].sort();
   for (const name of scriptNames) {
     if (typeof (scripts as Record<string, unknown>)[name] !== "string") {
       throw new ProjectFileError(
@@ -180,5 +183,9 @@ export async function discoverPackageScripts(
     cwd: { displayPath: resolvedCwd.displayPath, canonicalPath: resolvedCwd.canonicalPath },
     ...(typeof packageName === "string" ? { packageName } : {}),
     scriptNames,
+    scripts: declared.map((name) => ({
+      name,
+      command: (scripts as Record<string, string>)[name] as string,
+    })),
   };
 }

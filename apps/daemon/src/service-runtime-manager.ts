@@ -128,6 +128,11 @@ export class ServiceRuntimeManager {
     return this.#logBuffers;
   }
 
+  // The loopback address a run printed in its output, while its log is still retained.
+  appUrl(runId: string): string | null {
+    return this.#logBuffers.get(runId)?.appUrl ?? null;
+  }
+
   start(serviceId: string): Promise<StartOutcome> {
     this.#cancelPendingRestart(serviceId);
     this.#restartAttempts.delete(serviceId);

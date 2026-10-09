@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { basename, relative, sep } from "node:path";
 import {
+  type FolderInspection,
+  FolderInspectionResponseSchema,
   NpmScriptNameSchema,
   type ProfileConfig,
   ProfileConfigSchema,
@@ -11,13 +13,14 @@ import {
   type ReadinessProbe,
   type RestartPolicy,
   type RunSnapshot,
+  SCRIPT_COMMAND_LIMIT,
   type ScriptDiscovery,
   ScriptDiscoverySchema,
   type ServiceConfig,
   ServiceConfigSchema,
   type ServiceDiagnosticsResponse,
 } from "@devdock/contracts";
-import type { NpmLauncher, SpawnRequest } from "@devdock/platform";
+import type { DiscoveredPackage, NpmLauncher, SpawnRequest } from "@devdock/platform";
 import {
   checkLoopbackPort,
   discoverPackageScripts,
@@ -52,6 +55,29 @@ export class ProjectRegistryError extends Error {
     super(message);
     this.name = "ProjectRegistryError";
   }
+}
+
+function scriptDiscovery(discovered: DiscoveredPackage): ScriptDiscovery {
+  const supported = discovered.scriptNames.filter(
+    (name) => NpmScriptNameSchema.safeParse(name).success,
+  );
+  return ScriptDiscoverySchema.parse({
+    cwd: discovered.cwd,
+    ...(discovered.packageName === undefined || discovered.packageName.length > 214
+      ? {}
+      : { packageName: discovered.packageName }),
+    scriptNames: supported,
+    unsupportedScriptCount: discovered.scriptNames.length - supported.length,
+    scripts: discovered.scripts
+      .filter((script) => NpmScriptNameSchema.safeParse(script.name).success)
+      .map((script) => ({
+        name: script.name,
+        command:
+          script.command.length > SCRIPT_COMMAND_LIMIT
+            ? `${script.command.slice(0, SCRIPT_COMMAND_LIMIT - 1)}…`
+            : script.command,
+      })),
+  });
 }
 
 export class ProjectRegistry {
@@ -259,17 +285,20 @@ export class ProjectRegistry {
 
   async discoverScripts(projectId: string, cwd = "."): Promise<ScriptDiscovery> {
     const project = await this.#activeProject(projectId);
-    const discovered = await discoverPackageScripts(project.path, cwd);
-    const supported = discovered.scriptNames.filter(
-      (name) => NpmScriptNameSchema.safeParse(name).success,
-    );
-    return ScriptDiscoverySchema.parse({
-      cwd: discovered.cwd,
-      ...(discovered.packageName === undefined || discovered.packageName.length > 214
-        ? {}
-        : { packageName: discovered.packageName }),
-      scriptNames: supported,
-      unsupportedScriptCount: discovered.scriptNames.length - supported.length,
+    return scriptDiscovery(await discoverPackageScripts(project.path, cwd));
+  }
+
+  // Reads a folder's package.json before it is added, so the user can see what it contains.
+  // Nothing is stored and nothing runs.
+  async inspectFolder(path: string): Promise<FolderInspection> {
+    const resolved = await resolveProjectDirectory(path);
+    const discovery = scriptDiscovery(await discoverPackageScripts(resolved));
+    const suggestedName = (basename(resolved.canonicalPath) || resolved.canonicalPath)
+      .trim()
+      .slice(0, 128);
+    return FolderInspectionResponseSchema.parse({
+      folder: { displayPath: resolved.displayPath, suggestedName },
+      discovery,
     });
   }
 
@@ -325,9 +354,61 @@ export class ProjectRegistry {
     return this.#store.insertService(parsed.data);
   }
 
-  async openAppUrl(serviceId: string): Promise<string> {
+  // Replaces a service's optional settings. A run that is already going keeps the settings it
+  // started with; the new ones apply from its next start.
+  async updateServiceSettings(
+    serviceId: string,
+    settings: {
+      expectedPort?: number;
+      readiness?: ReadinessProbe;
+      restartPolicy: RestartPolicy;
+      envFiles: readonly string[];
+      requiredEnvKeys: readonly string[];
+    },
+  ): Promise<ServiceConfig> {
     const service = this.getService(serviceId);
     await this.#activeProject(service.projectId);
+    if (
+      settings.envFiles.some(
+        (reference) => !environmentReferenceStaysInside(service.cwd.canonicalPath, reference),
+      )
+    ) {
+      throw new ProjectRegistryError(
+        "SERVICE_CONFIG_INVALID",
+        "Environment files must stay inside the service working directory",
+      );
+    }
+    const { expectedPort: _port, readiness: _readiness, ...unchanged } = service;
+    const parsed = ServiceConfigSchema.safeParse({
+      ...unchanged,
+      ...(settings.expectedPort === undefined ? {} : { expectedPort: settings.expectedPort }),
+      ...(settings.readiness === undefined ? {} : { readiness: settings.readiness }),
+      restartPolicy: settings.restartPolicy,
+      envFiles: settings.envFiles,
+      requiredEnvKeys: settings.requiredEnvKeys,
+    });
+    if (!parsed.success) {
+      throw new ProjectRegistryError("SERVICE_CONFIG_INVALID", "Service configuration is invalid");
+    }
+    const updated = this.#store.updateService(parsed.data);
+    if (updated === null) {
+      throw new ProjectRegistryError("SERVICE_NOT_FOUND", "Service does not exist");
+    }
+    return updated;
+  }
+
+  async openAppUrl(serviceId: string, detectedUrl: string | null = null): Promise<string> {
+    const service = this.getService(serviceId);
+    await this.#activeProject(service.projectId);
+    // The address the app printed is what it really listens on, so it wins when it agrees with
+    // the configured port, or when no port is configured.
+    const detected = detectedUrl === null ? null : new URL(detectedUrl);
+    if (
+      detected !== null &&
+      (service.expectedPort === undefined || Number(detected.port) === service.expectedPort)
+    ) {
+      return detected.href;
+    }
     if (service.expectedPort === undefined) {
       throw new ProjectRegistryError(
         "OPEN_APP_PORT_UNCONFIGURED",

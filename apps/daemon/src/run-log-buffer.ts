@@ -24,12 +24,17 @@ export interface LogReplay {
   readonly latestSequence: number;
 }
 
+// Where the reader is inside a terminal escape sequence. Colour codes are dropped whole rather than
+// shown as replacement characters, so coloured output stays readable.
+type EscapeState = "none" | "escape" | "csi" | "osc" | "osc-escape";
+
 interface StreamState {
   readonly decoder: StringDecoder;
   parts: string[];
   bytes: number;
   truncated: boolean;
   skipNextLf: boolean;
+  escape: EscapeState;
   ended: boolean;
 }
 
@@ -40,8 +45,34 @@ function newStreamState(): StreamState {
     bytes: 0,
     truncated: false,
     skipNextLf: false,
+    escape: "none",
     ended: false,
   };
+}
+
+const LOOPBACK_URL =
+  /\bhttps?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|\[::\]):\d{1,5}(?:\/[^\s"'<>`]*)?/iu;
+
+// Finds the first loopback address with an explicit port in a line of output, such as Vite's
+// "Local: http://localhost:5173/". Wildcard hosts become localhost, which is where a browser on this
+// computer reaches them.
+export function detectAppUrl(text: string): string | null {
+  const match = LOOPBACK_URL.exec(text);
+  if (match === null) return null;
+  const candidate = match[0].replace(/[.,;:)\]}]+$/u, "");
+  let url: URL;
+  try {
+    url = new URL(candidate);
+  } catch {
+    return null;
+  }
+  if (url.hostname === "0.0.0.0" || url.hostname === "[::]") url.hostname = "localhost";
+  const port = Number(url.port);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) return null;
+  url.username = "";
+  url.password = "";
+  url.hash = "";
+  return url.href;
 }
 
 function positiveLimit(value: number, ceiling: number, name: string): number {
@@ -49,6 +80,19 @@ function positiveLimit(value: number, ceiling: number, name: string): number {
     throw new RangeError(`${name} must be an integer between 1 and ${ceiling}`);
   }
   return value;
+}
+
+function nextEscapeState(state: EscapeState, character: string): EscapeState {
+  if (state === "escape") return character === "[" ? "csi" : character === "]" ? "osc" : "none";
+  if (state === "csi") {
+    const point = character.codePointAt(0) ?? 0;
+    return point >= 0x40 && point <= 0x7e ? "none" : "csi";
+  }
+  if (state === "osc") {
+    return character === "\u0007" ? "none" : character === "\u001b" ? "osc-escape" : "osc";
+  }
+  // "osc-escape": ESC \ ends the sequence; anything else keeps reading it.
+  return character === "\\" ? "none" : "osc";
 }
 
 function safeCharacter(character: string): string {
@@ -76,6 +120,7 @@ export class RunLogBuffer {
   #retainedBytes = 0;
   #sequence = 0;
   #capturing = false;
+  #appUrl: string | null = null;
   readonly #listeners = new Set<(event: LogEvent) => void>();
   readonly #streamCleanups = new Map<LogStream, () => void>();
 
@@ -181,6 +226,11 @@ export class RunLogBuffer {
     };
   }
 
+  // The first loopback address this run printed, kept even after its line leaves the buffer.
+  get appUrl(): string | null {
+    return this.#appUrl;
+  }
+
   subscribe(listener: (event: LogEvent) => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
@@ -189,6 +239,15 @@ export class RunLogBuffer {
   #accept(stream: LogStream, decoded: string): void {
     const state = this.#streams[stream];
     for (const character of decoded) {
+      if (state.escape !== "none" && character !== "\r" && character !== "\n") {
+        state.escape = nextEscapeState(state.escape, character);
+        continue;
+      }
+      state.escape = "none";
+      if (character === "\u001b") {
+        state.escape = "escape";
+        continue;
+      }
       if (state.skipNextLf) {
         state.skipNextLf = false;
         if (character === "\n") continue;
@@ -220,6 +279,7 @@ export class RunLogBuffer {
   #emit(stream: LogStream): void {
     const state = this.#streams[stream];
     const text = state.parts.join("");
+    if (this.#appUrl === null) this.#appUrl = detectAppUrl(text);
     const event = Object.freeze(
       LogEventSchema.parse({
         daemonSessionId: this.daemonSessionId,

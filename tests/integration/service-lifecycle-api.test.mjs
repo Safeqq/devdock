@@ -215,7 +215,7 @@ test("authenticated service lifecycle API starts, streams, inspects, and stops a
       headers: { cookie },
     });
     assert.equal(initial.status, 200);
-    assert.deepEqual(await initial.json(), { snapshot: null, ownership: null });
+    assert.deepEqual(await initial.json(), { snapshot: null, ownership: null, appUrl: null });
     assert.equal(
       (
         await call(origin, `/api/services/${service.id}/start`, {

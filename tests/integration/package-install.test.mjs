@@ -216,6 +216,9 @@ test("packed CLI runs from a clean local install and closes through the native O
         tarball,
       ],
       { cwd: installDirectory },
+      // Extracting the bundled tarball took 86.6 s on the Windows runner (workflow 37820516272)
+      // versus about 6 s on macOS and Ubuntu, so 120 s left too little margin.
+      240_000,
     );
     step("npm install");
 

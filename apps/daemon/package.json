@@ -1,7 +1,8 @@
 {
   "name": "@devdock/daemon",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "exports": {
     "./start": "./dist/registry-api-cli.js"
@@ -13,10 +14,10 @@
     "build": "node ../../scripts/clean-build-output.mjs && tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@devdock/contracts": "0.0.0",
-    "@devdock/platform": "0.0.0",
-    "@devdock/storage": "0.0.0",
-    "@devdock/web": "0.0.0",
+    "@devdock/contracts": "0.1.0",
+    "@devdock/platform": "0.1.0",
+    "@devdock/storage": "0.1.0",
+    "@devdock/web": "0.1.0",
     "@fastify/static": "10.1.4",
     "fastify": "5.12.5"
   }

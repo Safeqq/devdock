@@ -3,7 +3,7 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promise
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { test } from "node:test";
+import { after, before, test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "playwright-core";
@@ -103,10 +103,30 @@ async function browserExecutable() {
   );
 }
 
+// Chrome's first launch on a fresh Ubuntu runner took 22 s, plus 8 s for its first context
+// (workflow 37820516272), while later launches took under 3 s. Both tests share one browser
+// launched and warmed here, outside their own budgets; each test still gets fresh contexts.
+let browser;
+let browserStartupMs;
+before(
+  async () => {
+    const started = performance.now();
+    browser = await chromium.launch({
+      executablePath: await browserExecutable(),
+      headless: true,
+      timeout: 120_000,
+    });
+    await (await browser.newContext()).close();
+    browserStartupMs = Math.round(performance.now() - started);
+  },
+  { timeout: 150_000 },
+);
+after(() => browser?.close());
+
 test("browser pairs and manages project configuration without executing a script", {
-  // Ubuntu CI routinely needs 23-31 s for this test; 35 s left too little margin.
-  timeout: 60_000,
+  timeout: 35_000,
 }, async (t) => {
+  t.diagnostic(`shared browser startup: ${browserStartupMs} ms`);
   const step = stepTimer(t);
   const tempRoot = await mkdtemp(join(tmpdir(), "devdock-browser-"));
   const safeRoot = cleanupRoot(tempRoot, "devdock-browser-");
@@ -114,7 +134,7 @@ test("browser pairs and manages project configuration without executing a script
   const markerPath = join(projectPath, "marker.out");
   let store;
   let api;
-  let browser;
+  const contexts = [];
   try {
     await mkdir(projectPath);
     await writeFile(
@@ -137,9 +157,8 @@ test("browser pairs and manages project configuration without executing a script
     });
     const origin = await api.listen(0);
     step("setup");
-    browser = await chromium.launch({ executablePath: await browserExecutable(), headless: true });
-    step("browser launch");
     const context = await browser.newContext();
+    contexts.push(context);
     // Below the test timeout so a stuck step fails with its locator instead of a bare timeout.
     context.setDefaultTimeout(15_000);
     const page = await context.newPage();
@@ -216,7 +235,9 @@ test("browser pairs and manages project configuration without executing a script
 
     await page.reload();
     await page.getByRole("heading", { name: "Browser Fixture" }).waitFor();
-    const unpairedPage = await (await browser.newContext()).newPage();
+    const unpairedContext = await browser.newContext();
+    contexts.push(unpairedContext);
+    const unpairedPage = await unpairedContext.newPage();
     await unpairedPage.goto(origin);
     await unpairedPage.getByRole("heading", { name: "Pair this browser" }).waitFor();
     step("reload and unpaired context");
@@ -226,7 +247,7 @@ test("browser pairs and manages project configuration without executing a script
     await access(join(projectPath, "package.json"));
     assert.deepEqual(pageErrors, []);
   } finally {
-    await browser?.close();
+    await Promise.all(contexts.map((context) => context.close()));
     await api?.close();
     store?.close();
     await rm(safeRoot, { recursive: true, force: true });
@@ -244,7 +265,7 @@ test("browser starts, follows logs, survives tab close, and stops an npm service
   const projectPath = join(tempRoot, "runtime café & [browser]");
   let store;
   let api;
-  let browser;
+  const contexts = [];
   try {
     const expectedPort = await availablePort();
     await mkdir(projectPath);
@@ -280,8 +301,8 @@ test("browser starts, follows logs, survives tab close, and stops an npm service
       webRoot: fileURLToPath(new URL("../../apps/web/dist/", import.meta.url)),
     });
     const origin = await api.listen(0);
-    browser = await chromium.launch({ executablePath: await browserExecutable(), headless: true });
     const context = await browser.newContext();
+    contexts.push(context);
     const pageErrors = [];
     let page = await context.newPage();
     page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -358,7 +379,7 @@ test("browser starts, follows logs, survives tab close, and stops an npm service
     assert.equal(store.listRuns(service.id).at(-1).processState, "stopped");
     assert.deepEqual(pageErrors, []);
   } finally {
-    await browser?.close();
+    await Promise.all(contexts.map((context) => context.close()));
     await api?.close();
     store?.close();
     await rm(safeRoot, { recursive: true, force: true });

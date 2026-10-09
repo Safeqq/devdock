@@ -4,6 +4,8 @@ All notable changes to DevDock will be documented in this file.
 
 ## Unreleased
 
+## 0.1.0 - 2026-10-09
+
 ### Added
 
 - A loopback-only dashboard and authenticated local API for registering trusted projects, discovering npm scripts, configuring services, and controlling their lifecycle.
@@ -20,7 +22,8 @@ All notable changes to DevDock will be documented in this file.
 - Byte-for-byte reproducibility verification across two isolated npm pack attempts before a local artifact is promoted.
 - Independent fresh-repack verification that detects when a valid promoted tarball no longer matches current package inputs.
 - Deterministic CycloneDX 1.5 production SBOM generation bound to exact lockfile versions, package URLs, SHA-512 integrity, distribution sources, and the promoted package inventory, with path and credential validation.
-- Deterministic third-party license inventory and evidence verification derived from the production SBOM, without selecting the DevDock project license.
+- Deterministic third-party license inventory and evidence verification derived from the production SBOM.
+- MIT license text, license metadata on the root package and all five workspaces, and repository, homepage, and issue-tracker metadata for the GitHub repository.
 
 ### Security
 

@@ -1,7 +1,8 @@
 {
   "name": "@devdock/web",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "files": [
     "dist"
@@ -11,7 +12,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@devdock/contracts": "0.0.0"
+    "@devdock/contracts": "0.1.0"
   },
   "devDependencies": {
     "@types/react": "19.3.0",

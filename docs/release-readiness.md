@@ -43,11 +43,13 @@ The user selected these on 2026-10-09:
 
 `npm run verify:release` passed on the 0.1.0 tree, and `npm run verify:candidate -- --target repository` reported READY with every check passing.
 
-## Remaining steps before tagging
+## Release steps
 
-These steps publish or create durable records, so the user runs them:
+Steps 1–3 ran under the user's standing commit and push authorization; step 4 publishes, so it ran only after the user confirmed it on 2026-10-09.
 
 1. Done: the 0.1.0 release tree was committed and pushed as `3d5c631`.
 2. Done: the three-OS workflow passed on `3d5c631` and its tarball SHA-256 values are recorded above.
 3. Done: `npm run verify:release` rebuilt the assets from the clean `3d5c631` tree with the same hashes, and `npm run verify:candidate -- --target repository` still reports READY.
-4. Pending user confirmation: create the annotated tag `v0.1.0` on that commit and a GitHub Release that attaches `devdock-0.1.0.tgz`, its `.sha256`, `devdock-0.1.0.cdx.json`, and `devdock-0.1.0.licenses.json` with their checksums.
+4. Done: create the annotated tag `v0.1.0` on that commit and a GitHub Release that attaches `devdock-0.1.0.tgz`, its `.sha256`, `devdock-0.1.0.cdx.json`, and `devdock-0.1.0.licenses.json` with their checksums.
+
+DevDock 0.1.0 was published on 2026-10-09 at https://github.com/Safeqq/devdock/releases/tag/v0.1.0. The annotated tag `v0.1.0` points to `3d5c631`, and the release is neither a draft nor a prerelease. Its six assets were downloaded back from GitHub, and `sha256sum -c` confirmed the tarball, SBOM, and license inventory against their published `.sha256` files. The release notes cover installation from the tarball, the verified platforms and toolchain, known limits, the 0.1.0 changelog, and asset checksums. Nothing was published to npm, and the demo recording was not released.

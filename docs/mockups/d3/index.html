@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>DevDock D3 mockup</title>
+    <link rel="stylesheet" href="mockup.css" />
+  </head>
+  <body>
+    <!-- Static review mockup for stage D3. Sample data only; nothing here talks to a daemon.
+         Screens: #welcome, #project, #add, #advanced (render one at a time via the URL hash). -->
+
+    <section class="screen welcome" id="welcome">
+      <div class="welcome-card">
+        <div class="logo" aria-hidden="true"><span></span><span></span><span></span></div>
+        <h1>Welcome to DevDock</h1>
+        <p class="lead">Start and stop your project's npm scripts from one place, without a terminal.</p>
+        <ol class="steps">
+          <li><strong>Add a project folder.</strong> DevDock reads its <code>package.json</code>.</li>
+          <li><strong>Press Start</strong> on any script. Its output appears right below.</li>
+          <li><strong>Open</strong> your app in the browser when it's ready.</li>
+        </ol>
+        <button class="primary large" type="button">＋ Add your first project</button>
+        <p class="trust">Scripts run with your Windows account's permissions. Only add projects you trust.</p>
+      </div>
+    </section>
+
+    <section class="screen app" id="project">
+      <aside class="sidebar">
+        <div class="brand"><div class="logo small" aria-hidden="true"><span></span><span></span><span></span></div>DevDock</div>
+        <p class="side-label">Projects</p>
+        <nav class="projects">
+          <a class="active" href="#project"><span class="dot running"></span>toko-online<span class="count">2 running</span></a>
+          <a href="#project"><span class="dot"></span>blog</a>
+          <a href="#project"><span class="dot failed"></span>api-kampus<span class="count fail">1 failed</span></a>
+        </nav>
+        <button class="ghost add" type="button">＋ Add project</button>
+        <div class="side-footer">
+          <span class="engine"><span class="dot running"></span>Engine running</span>
+          <span class="node">Node.js 24.11.1 (from PATH)</span>
+        </div>
+      </aside>
+
+      <main class="content">
+        <header class="project-header">
+          <div>
+            <h1>toko-online</h1>
+            <p class="path">C:\Kode\toko-online</p>
+          </div>
+          <div class="header-actions">
+            <button class="ghost" type="button">Stop all</button>
+            <button class="ghost icon" type="button" aria-label="More project actions">⋯</button>
+          </div>
+        </header>
+
+        <h2 class="section-title">Scripts <span>from package.json</span></h2>
+        <div class="cards">
+          <article class="card running selected">
+            <div class="card-top"><h3>dev</h3><span class="status ready">● Running · Ready</span></div>
+            <p class="cmd">vite</p>
+            <p class="meta">localhost:5173 · started 12 min ago</p>
+            <div class="card-actions">
+              <button class="stop" type="button">■ Stop</button>
+              <button class="ghost" type="button">Open ↗</button>
+              <button class="ghost icon" type="button" aria-label="Advanced settings for dev">⚙</button>
+            </div>
+          </article>
+          <article class="card running">
+            <div class="card-top"><h3>api</h3><span class="status starting">◐ Starting…</span></div>
+            <p class="cmd">node server.js</p>
+            <p class="meta">Waiting for localhost:3000 to respond</p>
+            <div class="card-actions">
+              <button class="stop" type="button">■ Stop</button>
+              <button class="ghost" type="button" disabled>Open ↗</button>
+              <button class="ghost icon" type="button" aria-label="Advanced settings for api">⚙</button>
+            </div>
+          </article>
+          <article class="card">
+            <div class="card-top"><h3>build</h3><span class="status stopped">○ Stopped</span></div>
+            <p class="cmd">vite build</p>
+            <p class="meta">Last run finished 2 h ago</p>
+            <div class="card-actions">
+              <button class="start" type="button">▶ Start</button>
+              <button class="ghost icon" type="button" aria-label="Advanced settings for build">⚙</button>
+            </div>
+          </article>
+          <article class="card failed">
+            <div class="card-top"><h3>test</h3><span class="status failed">✕ Failed</span></div>
+            <p class="cmd">vitest run</p>
+            <p class="meta">Exited with code 1 · 3 min ago</p>
+            <div class="card-actions">
+              <button class="start" type="button">▶ Start again</button>
+              <button class="ghost" type="button">View log</button>
+              <button class="ghost icon" type="button" aria-label="Advanced settings for test">⚙</button>
+            </div>
+          </article>
+        </div>
+
+        <h2 class="section-title">Groups <span>start several scripts together</span></h2>
+        <div class="groups">
+          <article class="group">
+            <div>
+              <h3>Full stack</h3>
+              <p class="meta">api → dev · starts api first, then dev when api is ready</p>
+            </div>
+            <div class="card-actions">
+              <span class="status starting">◐ Starting 1 of 2</span>
+              <button class="stop" type="button">■ Stop group</button>
+            </div>
+          </article>
+          <button class="ghost new-group" type="button">＋ New group</button>
+        </div>
+
+        <section class="log-panel" aria-label="Output of dev">
+          <div class="log-head">
+            <span>Output · <strong>dev</strong></span>
+            <span class="log-tools"><button class="ghost small" type="button">Clear</button><button class="ghost small" type="button">⤢</button></span>
+          </div>
+          <pre class="log"><span class="muted">10:42:01</span>  VITE v8.3.0  ready in 412 ms
+<span class="muted">10:42:01</span>  ➜  Local:   <span class="link">http://localhost:5173/</span>
+<span class="muted">10:42:01</span>  ➜  press h + enter to show help
+<span class="muted">10:44:17</span>  hmr update /src/App.tsx</pre>
+        </section>
+      </main>
+    </section>
+
+    <section class="screen app dim" id="add">
+      <div class="modal">
+        <h2>Add toko-online?</h2>
+        <p class="path">C:\Kode\toko-online</p>
+        <p>DevDock found <strong>5 scripts</strong> in <code>package.json</code>. Nothing runs until you press <strong>Start</strong>.</p>
+        <ul class="found">
+          <li><code>dev</code><span>vite</span></li>
+          <li><code>api</code><span>node server.js</span></li>
+          <li><code>build</code><span>vite build</span></li>
+          <li><code>test</code><span>vitest run</span></li>
+          <li><code>lint</code><span>eslint .</span></li>
+        </ul>
+        <label class="field">Name in DevDock<input value="toko-online" /></label>
+        <div class="modal-actions">
+          <button class="ghost" type="button">Cancel</button>
+          <button class="primary" type="button">Add project</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen app dim side" id="advanced">
+      <aside class="sheet" aria-label="Advanced settings for api">
+        <header class="sheet-head"><h2>api · Advanced</h2><button class="ghost icon" type="button" aria-label="Close">✕</button></header>
+        <p class="hint">Optional. DevDock works without these; they help it tell when your app is ready.</p>
+
+        <label class="field">App port<input value="3000" /><small>Used for the Open button and readiness check.</small></label>
+
+        <fieldset class="field">
+          <legend>Ready when</legend>
+          <label class="radio"><input type="radio" name="ready" /> Don't check</label>
+          <label class="radio"><input type="radio" name="ready" /> The port accepts connections</label>
+          <label class="radio"><input type="radio" name="ready" checked /> This page answers: <input class="inline" value="/health" /></label>
+          <small>Give up after <input class="inline short" value="30" /> seconds.</small>
+        </fieldset>
+
+        <label class="field">Environment files<input value=".env.local" /><small>Values stay on this computer and are never shown here.</small></label>
+        <label class="field">Required variables<input value="DATABASE_URL, JWT_SECRET" /></label>
+
+        <fieldset class="field">
+          <legend>If it crashes</legend>
+          <label class="radio"><input type="radio" name="restart" checked /> Leave it stopped</label>
+          <label class="radio"><input type="radio" name="restart" /> Restart up to <input class="inline short" value="2" /> times</label>
+        </fieldset>
+
+        <div class="preview">
+          <p class="side-label">What DevDock runs</p>
+          <code>npm run api</code>
+          <small>in C:\Kode\toko-online · Node.js 24.11.1 (from PATH)</small>
+        </div>
+        <div class="modal-actions">
+          <button class="ghost" type="button">Cancel</button>
+          <button class="primary" type="button">Save</button>
+        </div>
+      </aside>
+    </section>
+    <script>
+      // Shows only the screen named in the URL hash so each one can be captured on its own.
+      const show = () => {
+        const id = location.hash.slice(1) || "project";
+        for (const screen of document.querySelectorAll(".screen")) screen.hidden = screen.id !== id;
+        if (id === "add" || id === "advanced") {
+          const backdrop = document.getElementById("project").cloneNode(true);
+          backdrop.hidden = false;
+          backdrop.removeAttribute("id");
+          backdrop.classList.add("backdrop");
+          document.getElementById(id).prepend(backdrop);
+        }
+      };
+      addEventListener("hashchange", () => location.reload());
+      show();
+    </script>
+  </body>
+</html>

@@ -28,7 +28,7 @@ if (executablePath === undefined) throw new Error("No Edge installation found");
 const browser = await chromium.launch({ executablePath, headless: true });
 try {
   const context = await browser.newContext({ viewport: { width: 1280, height: 820 } });
-  for (const screen of ["welcome", "project", "add", "advanced"]) {
+  for (const screen of ["welcome", "first", "project", "add", "settings"]) {
     const tab = await context.newPage();
     await tab.goto(`${page.href}#${screen}`);
     await tab.screenshot({ path: fileURLToPath(new URL(`./${screen}.png`, import.meta.url)) });
@@ -37,4 +37,4 @@ try {
 } finally {
   await browser.close();
 }
-console.log("captured welcome, project, add, and advanced");
+console.log("captured welcome, first, project, add, and settings");

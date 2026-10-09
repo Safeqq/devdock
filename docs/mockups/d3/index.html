@@ -6,193 +6,320 @@
     <link rel="stylesheet" href="mockup.css" />
   </head>
   <body>
-    <!-- Static review mockup for stage D3. Sample data only; nothing here talks to a daemon.
-         Screens: #welcome, #project, #add, #advanced (render one at a time via the URL hash). -->
+    <!-- Static review mockup for stage D3 (second iteration). Sample data only; nothing here talks
+         to a daemon. Screens, one per URL hash: #welcome, #first, #project, #add, #settings. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <defs>
+        <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12.5-7.5z" fill="currentColor" /></symbol>
+        <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" /></symbol>
+        <symbol id="i-redo" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+        <symbol id="i-open" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+        <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="2" /><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" /></symbol>
+        <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" /></symbol>
+        <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" /><path d="M3 12h18M12 3c2.6 2.6 3.8 5.6 3.8 9S14.6 18.4 12 21M12 3C9.4 5.6 8.2 8.6 8.2 12s1.2 6.4 3.8 9" fill="none" stroke="currentColor" stroke-width="2" /></symbol>
+        <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+        <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" /></symbol>
+        <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.5l9.5 16.5h-19z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" /><path d="M12 10v4.5M12 17.2v.3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" /></symbol>
+        <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" /></symbol>
+        <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5" fill="none" stroke="currentColor" stroke-width="2" /><path d="M7 9.5l3 2.5-3 2.5M12.5 15h4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+        <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" /><path d="M9.6 9.3a2.5 2.5 0 1 1 3.4 2.3c-.7.3-1 .8-1 1.6v.3M12 16.8v.3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></symbol>
+        <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.8" fill="currentColor" /><circle cx="12" cy="12" r="1.8" fill="currentColor" /><circle cx="19" cy="12" r="1.8" fill="currentColor" /></symbol>
+        <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" fill="currentColor" /></symbol>
+        <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" stroke-width="2" /></symbol>
+      </defs>
+    </svg>
 
+    <!-- 1. Welcome: first launch, nothing added yet. -->
     <section class="screen welcome" id="welcome">
-      <div class="welcome-card">
-        <div class="logo" aria-hidden="true"><span></span><span></span><span></span></div>
+      <div class="welcome-inner">
+        <div class="logo big" aria-hidden="true"><span></span><span></span><span></span></div>
         <h1>Welcome to DevDock</h1>
-        <p class="lead">Start and stop your project's npm scripts from one place, without a terminal.</p>
-        <ol class="steps">
-          <li><strong>Add a project folder.</strong> DevDock reads its <code>package.json</code>.</li>
-          <li><strong>Press Start</strong> on any script. Its output appears right below.</li>
-          <li><strong>Open</strong> your app in the browser when it's ready.</li>
+        <p class="lead">Run your project's scripts with a click — no terminal windows to juggle.</p>
+        <div class="explain">
+          <svg class="icon"><use href="#i-help" /></svg>
+          <p><strong>What's a script?</strong> Projects list their commands in a file called <code>package.json</code> — things like <code>dev</code> (starts your app while you work) or <code>build</code> (prepares it for release). DevDock turns each one into a button.</p>
+        </div>
+        <ol class="step-cards">
+          <li>
+            <span class="step-icon"><svg><use href="#i-folder" /></svg></span>
+            <span class="step-num">Step 1</span>
+            <strong>Add a project</strong>
+            <span>Pick the folder that contains <code>package.json</code>.</span>
+          </li>
+          <li>
+            <span class="step-icon"><svg><use href="#i-play" /></svg></span>
+            <span class="step-num">Step 2</span>
+            <strong>Press Start</strong>
+            <span>DevDock runs the script and shows what it prints.</span>
+          </li>
+          <li>
+            <span class="step-icon"><svg><use href="#i-globe" /></svg></span>
+            <span class="step-num">Step 3</span>
+            <strong>Open your app</strong>
+            <span>When it says <em>Ready</em>, open it in your browser.</span>
+          </li>
         </ol>
-        <button class="primary large" type="button">＋ Add your first project</button>
-        <p class="trust">Scripts run with your Windows account's permissions. Only add projects you trust.</p>
+        <button class="btn primary large" type="button"><svg><use href="#i-folder" /></svg>Choose a project folder</button>
+        <p class="trust"><svg class="icon"><use href="#i-alert" /></svg>Scripts run with your Windows account's permissions. Only add projects you trust.</p>
       </div>
     </section>
 
-    <section class="screen app" id="project">
+    <!-- 2. First project just added: guidance banner, recommended script, nothing running. -->
+    <section class="screen app" id="first">
       <aside class="sidebar">
         <div class="brand"><div class="logo small" aria-hidden="true"><span></span><span></span><span></span></div>DevDock</div>
-        <p class="side-label">Projects</p>
+        <div class="side-head"><span class="side-label">Projects</span><button class="btn icon-only ghost tiny" type="button" aria-label="Add project"><svg><use href="#i-plus" /></svg></button></div>
         <nav class="projects">
-          <a class="active" href="#project"><span class="dot running"></span>toko-online<span class="count">2 running</span></a>
-          <a href="#project"><span class="dot"></span>blog</a>
-          <a href="#project"><span class="dot failed"></span>api-kampus<span class="count fail">1 failed</span></a>
+          <a class="active" href="#first"><span class="dot"></span><span class="pname">toko-online<small>Nothing running</small></span></a>
         </nav>
-        <button class="ghost add" type="button">＋ Add project</button>
         <div class="side-footer">
-          <span class="engine"><span class="dot running"></span>Engine running</span>
-          <span class="node">Node.js 24.11.1 (from PATH)</span>
+          <a class="help-link" href="#first"><svg class="icon"><use href="#i-help" /></svg>How DevDock works</a>
+          <span class="engine"><span class="dot running"></span>DevDock is running · Node.js 24.11.1</span>
         </div>
       </aside>
-
       <main class="content">
         <header class="project-header">
           <div>
             <h1>toko-online</h1>
-            <p class="path">C:\Kode\toko-online</p>
+            <p class="path"><svg class="icon"><use href="#i-folder" /></svg>C:\Kode\toko-online · <a href="#first">Open folder</a></p>
           </div>
-          <div class="header-actions">
-            <button class="ghost" type="button">Stop all</button>
-            <button class="ghost icon" type="button" aria-label="More project actions">⋯</button>
-          </div>
+          <button class="btn icon-only ghost" type="button" aria-label="Project options"><svg><use href="#i-more" /></svg></button>
         </header>
 
-        <h2 class="section-title">Scripts <span>from package.json</span></h2>
+        <div class="banner">
+          <svg class="icon"><use href="#i-spark" /></svg>
+          <div>
+            <strong>Quick start:</strong> press <strong>Start</strong> on <code>dev</code> — it's usually the script that runs your app while you work.
+            When its status turns <span class="pill ready small">Ready</span>, click <strong>Open</strong> to see it in your browser.
+          </div>
+          <button class="btn icon-only ghost tiny" type="button" aria-label="Dismiss"><svg><use href="#i-x" /></svg></button>
+        </div>
+
+        <h2 class="section-title">Scripts</h2>
         <div class="cards">
-          <article class="card running selected">
-            <div class="card-top"><h3>dev</h3><span class="status ready">● Running · Ready</span></div>
-            <p class="cmd">vite</p>
-            <p class="meta">localhost:5173 · started 12 min ago</p>
-            <div class="card-actions">
-              <button class="stop" type="button">■ Stop</button>
-              <button class="ghost" type="button">Open ↗</button>
-              <button class="ghost icon" type="button" aria-label="Advanced settings for dev">⚙</button>
-            </div>
-          </article>
-          <article class="card running">
-            <div class="card-top"><h3>api</h3><span class="status starting">◐ Starting…</span></div>
-            <p class="cmd">node server.js</p>
-            <p class="meta">Waiting for localhost:3000 to respond</p>
-            <div class="card-actions">
-              <button class="stop" type="button">■ Stop</button>
-              <button class="ghost" type="button" disabled>Open ↗</button>
-              <button class="ghost icon" type="button" aria-label="Advanced settings for api">⚙</button>
+          <article class="card recommended">
+            <div class="card-head"><h3>dev</h3><span class="tag">Recommended</span></div>
+            <p class="desc">Development server · keeps running</p>
+            <p class="cmd"><svg class="icon"><use href="#i-terminal" /></svg>vite</p>
+            <div class="card-foot">
+              <span class="pill idle">Not running</span>
+              <div class="actions"><button class="btn primary" type="button"><svg><use href="#i-play" /></svg>Start</button><button class="btn icon-only ghost" type="button" aria-label="Settings for dev"><svg><use href="#i-gear" /></svg></button></div>
             </div>
           </article>
           <article class="card">
-            <div class="card-top"><h3>build</h3><span class="status stopped">○ Stopped</span></div>
-            <p class="cmd">vite build</p>
-            <p class="meta">Last run finished 2 h ago</p>
-            <div class="card-actions">
-              <button class="start" type="button">▶ Start</button>
-              <button class="ghost icon" type="button" aria-label="Advanced settings for build">⚙</button>
+            <div class="card-head"><h3>build</h3></div>
+            <p class="desc">Builds your app for release · runs once</p>
+            <p class="cmd"><svg class="icon"><use href="#i-terminal" /></svg>vite build</p>
+            <div class="card-foot">
+              <span class="pill idle">Never run</span>
+              <div class="actions"><button class="btn secondary" type="button"><svg><use href="#i-play" /></svg>Run</button><button class="btn icon-only ghost" type="button" aria-label="Settings for build"><svg><use href="#i-gear" /></svg></button></div>
             </div>
           </article>
-          <article class="card failed">
-            <div class="card-top"><h3>test</h3><span class="status failed">✕ Failed</span></div>
-            <p class="cmd">vitest run</p>
-            <p class="meta">Exited with code 1 · 3 min ago</p>
-            <div class="card-actions">
-              <button class="start" type="button">▶ Start again</button>
-              <button class="ghost" type="button">View log</button>
-              <button class="ghost icon" type="button" aria-label="Advanced settings for test">⚙</button>
+          <article class="card">
+            <div class="card-head"><h3>test</h3></div>
+            <p class="desc">Runs your tests · runs once</p>
+            <p class="cmd"><svg class="icon"><use href="#i-terminal" /></svg>vitest run</p>
+            <div class="card-foot">
+              <span class="pill idle">Never run</span>
+              <div class="actions"><button class="btn secondary" type="button"><svg><use href="#i-play" /></svg>Run</button><button class="btn icon-only ghost" type="button" aria-label="Settings for test"><svg><use href="#i-gear" /></svg></button></div>
             </div>
           </article>
         </div>
 
-        <h2 class="section-title">Groups <span>start several scripts together</span></h2>
-        <div class="groups">
-          <article class="group">
-            <div>
-              <h3>Full stack</h3>
-              <p class="meta">api → dev · starts api first, then dev when api is ready</p>
-            </div>
-            <div class="card-actions">
-              <span class="status starting">◐ Starting 1 of 2</span>
-              <button class="stop" type="button">■ Stop group</button>
-            </div>
-          </article>
-          <button class="ghost new-group" type="button">＋ New group</button>
+        <div class="empty-output">
+          <svg class="icon"><use href="#i-terminal" /></svg>
+          <p>Output from your scripts will appear here once you start one.</p>
         </div>
+      </main>
+    </section>
 
-        <section class="log-panel" aria-label="Output of dev">
-          <div class="log-head">
-            <span>Output · <strong>dev</strong></span>
-            <span class="log-tools"><button class="ghost small" type="button">Clear</button><button class="ghost small" type="button">⤢</button></span>
+    <!-- 3. Everyday use: several states at once, output tabs, a group. -->
+    <section class="screen app" id="project">
+      <aside class="sidebar">
+        <div class="brand"><div class="logo small" aria-hidden="true"><span></span><span></span><span></span></div>DevDock</div>
+        <div class="side-head"><span class="side-label">Projects</span><button class="btn icon-only ghost tiny" type="button" aria-label="Add project"><svg><use href="#i-plus" /></svg></button></div>
+        <nav class="projects">
+          <a class="active" href="#project"><span class="dot running"></span><span class="pname">toko-online<small class="ok">2 running</small></span></a>
+          <a href="#project"><span class="dot"></span><span class="pname">blog<small>Nothing running</small></span></a>
+          <a href="#project"><span class="dot failed"></span><span class="pname">api-kampus<small class="bad">1 failed</small></span></a>
+        </nav>
+        <div class="side-footer">
+          <a class="help-link" href="#project"><svg class="icon"><use href="#i-help" /></svg>How DevDock works</a>
+          <span class="engine"><span class="dot running"></span>DevDock is running · Node.js 24.11.1</span>
+        </div>
+      </aside>
+      <main class="content">
+        <header class="project-header">
+          <div>
+            <h1>toko-online</h1>
+            <p class="path"><svg class="icon"><use href="#i-folder" /></svg>C:\Kode\toko-online · <a href="#project">Open folder</a></p>
           </div>
-          <pre class="log"><span class="muted">10:42:01</span>  VITE v8.3.0  ready in 412 ms
-<span class="muted">10:42:01</span>  ➜  Local:   <span class="link">http://localhost:5173/</span>
-<span class="muted">10:42:01</span>  ➜  press h + enter to show help
-<span class="muted">10:44:17</span>  hmr update /src/App.tsx</pre>
+          <div class="header-actions">
+            <button class="btn danger-soft" type="button"><svg><use href="#i-stop" /></svg>Stop all (2)</button>
+            <button class="btn icon-only ghost" type="button" aria-label="Project options"><svg><use href="#i-more" /></svg></button>
+          </div>
+        </header>
+
+        <h2 class="section-title">Scripts</h2>
+        <div class="cards">
+          <article class="card live selected">
+            <div class="card-head"><h3>dev</h3><span class="url">localhost:5173</span></div>
+            <p class="desc">Development server · keeps running</p>
+            <p class="cmd"><svg class="icon"><use href="#i-terminal" /></svg>vite</p>
+            <div class="card-foot">
+              <span class="pill ready"><span class="pulse"></span>Running · Ready</span>
+              <div class="actions"><button class="btn primary" type="button"><svg><use href="#i-open" /></svg>Open</button><button class="btn danger-soft" type="button"><svg><use href="#i-stop" /></svg>Stop</button><button class="btn icon-only ghost" type="button" aria-label="Settings for dev"><svg><use href="#i-gear" /></svg></button></div>
+            </div>
+          </article>
+          <article class="card live">
+            <div class="card-head"><h3>api</h3><span class="url">localhost:3000</span></div>
+            <p class="desc">Starts the API · keeps running</p>
+            <p class="cmd"><svg class="icon"><use href="#i-terminal" /></svg>node server.js</p>
+            <p class="meta">Waiting for localhost:3000 to answer</p>
+            <div class="card-foot">
+              <span class="pill starting"><span class="spinner"></span>Starting…</span>
+              <div class="actions"><button class="btn danger-soft" type="button"><svg><use href="#i-stop" /></svg>Stop</button><button class="btn icon-only ghost" type="button" aria-label="Settings for api"><svg><use href="#i-gear" /></svg></button></div>
+            </div>
+          </article>
+          <article class="card">
+            <div class="card-head"><h3>build</h3></div>
+            <p class="desc">Builds your app for release · runs once</p>
+            <p class="cmd"><svg class="icon"><use href="#i-terminal" /></svg>vite build</p>
+            <p class="meta">Took 14 s</p>
+            <div class="card-foot">
+              <span class="pill done"><svg class="icon"><use href="#i-check" /></svg>Finished 2 h ago</span>
+              <div class="actions"><button class="btn secondary" type="button"><svg><use href="#i-redo" /></svg>Run again</button><button class="btn icon-only ghost" type="button" aria-label="Settings for build"><svg><use href="#i-gear" /></svg></button></div>
+            </div>
+          </article>
+          <article class="card problem">
+            <div class="card-head"><h3>test</h3></div>
+            <p class="desc">Runs your tests · runs once</p>
+            <p class="cmd"><svg class="icon"><use href="#i-terminal" /></svg>vitest run</p>
+            <p class="why"><svg class="icon"><use href="#i-alert" /></svg>Stopped with an error (exit code 1). The output below shows what went wrong.</p>
+            <div class="card-foot">
+              <span class="pill failed"><svg class="icon"><use href="#i-x" /></svg>Failed · 3 min ago</span>
+              <div class="actions"><button class="btn secondary" type="button"><svg><use href="#i-redo" /></svg>Run again</button><button class="btn icon-only ghost" type="button" aria-label="Settings for test"><svg><use href="#i-gear" /></svg></button></div>
+            </div>
+          </article>
+          <article class="card">
+            <div class="card-head"><h3>preview</h3></div>
+            <p class="desc">Previews the built app · keeps running</p>
+            <p class="cmd"><svg class="icon"><use href="#i-terminal" /></svg>vite preview</p>
+            <div class="card-foot">
+              <span class="pill idle">Not running</span>
+              <div class="actions"><button class="btn secondary" type="button"><svg><use href="#i-play" /></svg>Start</button><button class="btn icon-only ghost" type="button" aria-label="Settings for preview"><svg><use href="#i-gear" /></svg></button></div>
+            </div>
+          </article>
+          <article class="card group-card">
+            <div class="card-head"><h3 class="plain"><svg class="icon"><use href="#i-layers" /></svg>Full stack</h3><span class="tag soft">Group</span></div>
+            <p class="desc">Starts <code>api</code>, then <code>dev</code> once api is ready</p>
+            <p class="meta">One click to start or stop both.</p>
+            <div class="card-foot">
+              <span class="pill starting"><span class="spinner"></span>1 of 2 ready</span>
+              <div class="actions"><button class="btn danger-soft" type="button"><svg><use href="#i-stop" /></svg>Stop group</button></div>
+            </div>
+          </article>
+        </div>
+
+        <section class="output" aria-label="Script output">
+          <div class="output-head">
+            <div class="tabs" role="tablist">
+              <button class="tab active" type="button"><span class="dot running"></span>dev</button>
+              <button class="tab" type="button"><span class="dot starting"></span>api</button>
+              <button class="tab" type="button"><span class="dot failed"></span>test</button>
+            </div>
+            <div class="tools"><button class="btn ghost tiny" type="button"><svg><use href="#i-copy" /></svg>Copy</button><button class="btn ghost tiny" type="button">Clear</button></div>
+          </div>
+          <pre class="log"><span class="t">10:42:01</span>  VITE v8.3.0  ready in 412 ms
+<span class="t">10:42:01</span>  ➜  Local:   <span class="link">http://localhost:5173/</span>
+<span class="t">10:42:01</span>  ➜  press h + enter to show help
+<span class="t">10:44:17</span>  <span class="info">hmr update</span> /src/App.tsx
+<span class="t">10:46:52</span>  <span class="warn">warning</span>  "useEffect" has a missing dependency: 'cart'</pre>
         </section>
       </main>
     </section>
 
-    <section class="screen app dim" id="add">
+    <!-- 4. Add project: confirmation after picking a folder. -->
+    <section class="screen app overlay" id="add" data-backdrop="first">
       <div class="modal">
-        <h2>Add toko-online?</h2>
-        <p class="path">C:\Kode\toko-online</p>
-        <p>DevDock found <strong>5 scripts</strong> in <code>package.json</code>. Nothing runs until you press <strong>Start</strong>.</p>
+        <div class="modal-icon"><svg><use href="#i-folder" /></svg></div>
+        <h2>Add this project?</h2>
+        <p class="path big">C:\Kode\toko-online</p>
+        <div class="found-head">
+          <span>Found <strong>5 scripts</strong> in <code>package.json</code></span>
+          <span class="safe"><svg class="icon"><use href="#i-check" /></svg>Nothing runs until you press Start</span>
+        </div>
         <ul class="found">
-          <li><code>dev</code><span>vite</span></li>
-          <li><code>api</code><span>node server.js</span></li>
-          <li><code>build</code><span>vite build</span></li>
-          <li><code>test</code><span>vitest run</span></li>
-          <li><code>lint</code><span>eslint .</span></li>
+          <li><code>dev</code><span>Development server</span></li>
+          <li><code>api</code><span>Starts the API</span></li>
+          <li><code>build</code><span>Builds your app for release</span></li>
+          <li><code>test</code><span>Runs your tests</span></li>
+          <li><code>lint</code><span>Checks your code</span></li>
         </ul>
-        <label class="field">Name in DevDock<input value="toko-online" /></label>
+        <label class="field">Name shown in DevDock<input value="toko-online" /></label>
         <div class="modal-actions">
-          <button class="ghost" type="button">Cancel</button>
-          <button class="primary" type="button">Add project</button>
+          <button class="btn ghost" type="button">Cancel</button>
+          <button class="btn primary" type="button"><svg><use href="#i-plus" /></svg>Add project</button>
         </div>
       </div>
     </section>
 
-    <section class="screen app dim side" id="advanced">
-      <aside class="sheet" aria-label="Advanced settings for api">
-        <header class="sheet-head"><h2>api · Advanced</h2><button class="ghost icon" type="button" aria-label="Close">✕</button></header>
-        <p class="hint">Optional. DevDock works without these; they help it tell when your app is ready.</p>
+    <!-- 5. Settings for one script: optional, plain language, grouped. -->
+    <section class="screen app overlay side" id="settings" data-backdrop="project">
+      <aside class="sheet" aria-label="Settings for api">
+        <header class="sheet-head">
+          <div><p class="eyebrow">Script settings</p><h2><code>api</code></h2></div>
+          <button class="btn icon-only ghost" type="button" aria-label="Close"><svg><use href="#i-x" /></svg></button>
+        </header>
+        <p class="hint">All optional. They help DevDock tell when your app is ready and how to open it.</p>
 
-        <label class="field">App port<input value="3000" /><small>Used for the Open button and readiness check.</small></label>
-
-        <fieldset class="field">
-          <legend>Ready when</legend>
-          <label class="radio"><input type="radio" name="ready" /> Don't check</label>
-          <label class="radio"><input type="radio" name="ready" /> The port accepts connections</label>
-          <label class="radio"><input type="radio" name="ready" checked /> This page answers: <input class="inline" value="/health" /></label>
-          <small>Give up after <input class="inline short" value="30" /> seconds.</small>
-        </fieldset>
-
-        <label class="field">Environment files<input value=".env.local" /><small>Values stay on this computer and are never shown here.</small></label>
-        <label class="field">Required variables<input value="DATABASE_URL, JWT_SECRET" /></label>
-
-        <fieldset class="field">
-          <legend>If it crashes</legend>
-          <label class="radio"><input type="radio" name="restart" checked /> Leave it stopped</label>
-          <label class="radio"><input type="radio" name="restart" /> Restart up to <input class="inline short" value="2" /> times</label>
-        </fieldset>
-
-        <div class="preview">
-          <p class="side-label">What DevDock runs</p>
-          <code>npm run api</code>
-          <small>in C:\Kode\toko-online · Node.js 24.11.1 (from PATH)</small>
+        <div class="group-box">
+          <h3>Opening your app</h3>
+          <label class="field">Port<input value="3000" /><small>The number in your app's address, e.g. <code>localhost:<strong>3000</strong></code>. DevDock also tries to spot it in the output.</small></label>
         </div>
+
+        <div class="group-box">
+          <h3>When is it ready?</h3>
+          <label class="radio"><input type="radio" name="ready" />Don't wait — treat it as ready right away</label>
+          <label class="radio"><input type="radio" name="ready" />When the port starts answering</label>
+          <label class="radio"><input type="radio" name="ready" checked />When this page loads: <input class="inline" value="/health" /></label>
+          <small>Give up after <input class="inline short" value="30" /> seconds and show it as failed.</small>
+        </div>
+
+        <div class="group-box">
+          <h3>Environment</h3>
+          <label class="field">Files to load<input value=".env.local" /><small>Values stay on this computer and are never shown in DevDock.</small></label>
+        </div>
+
+        <div class="group-box">
+          <h3>If it crashes</h3>
+          <label class="radio"><input type="radio" name="restart" checked />Leave it stopped so I can look</label>
+          <label class="radio"><input type="radio" name="restart" />Restart it, up to <input class="inline short" value="2" /> times</label>
+        </div>
+
+        <div class="preview"><span class="eyebrow">What DevDock runs</span><code>npm run api</code><small>in C:\Kode\toko-online with Node.js 24.11.1</small></div>
         <div class="modal-actions">
-          <button class="ghost" type="button">Cancel</button>
-          <button class="primary" type="button">Save</button>
+          <button class="btn ghost" type="button">Cancel</button>
+          <button class="btn primary" type="button">Save</button>
         </div>
       </aside>
     </section>
+
     <script>
       // Shows only the screen named in the URL hash so each one can be captured on its own.
-      const show = () => {
-        const id = location.hash.slice(1) || "project";
-        for (const screen of document.querySelectorAll(".screen")) screen.hidden = screen.id !== id;
-        if (id === "add" || id === "advanced") {
-          const backdrop = document.getElementById("project").cloneNode(true);
-          backdrop.hidden = false;
-          backdrop.removeAttribute("id");
-          backdrop.classList.add("backdrop");
-          document.getElementById(id).prepend(backdrop);
-        }
-      };
+      // Overlay screens get a dimmed copy of another screen behind them.
+      const id = location.hash.slice(1) || "project";
+      for (const screen of document.querySelectorAll(".screen")) screen.hidden = screen.id !== id;
+      const overlay = document.getElementById(id);
+      if (overlay?.dataset.backdrop) {
+        const backdrop = document.getElementById(overlay.dataset.backdrop).cloneNode(true);
+        backdrop.hidden = false;
+        backdrop.removeAttribute("id");
+        backdrop.classList.add("backdrop");
+        overlay.prepend(backdrop);
+      }
       addEventListener("hashchange", () => location.reload());
-      show();
     </script>
   </body>
 </html>

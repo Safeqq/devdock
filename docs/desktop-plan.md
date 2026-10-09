@@ -130,7 +130,7 @@ Keputusan tambahan dari spike:
 - Jendela hanya boleh menavigasi di origin daemon; navigasi lain diblokir (tautan Open App akan memakai browser default di D3).
 - `apps/desktop` adalah crate Rust, bukan workspace npm. Sebagai workspace, ia sempat ikut masuk SBOM produksi paket CLI dan membuat `verify:release` gagal; `@tauri-apps/cli` kini devDependency root.
 - Versi di `Cargo.toml` dan `tauri.conf.json` (0.1.0) belum diperiksa oleh `check:versions`/`release:version`; sinkronisasinya masuk D4.
-- Menutup jendela saat ini langsung keluar dari aplikasi dan menghentikan daemon dengan rapi; tray dan tutup-ke-tray adalah D2.
+- D2 (selesai): menutup jendela menyembunyikannya ke tray; menu tray berisi **Open DevDock** dan **Quit DevDock (stops all services)**. Peluncuran kedua memunculkan jendela yang ada, dan `devdock-desktop.exe --quit` menghentikan instance yang berjalan (dipakai uninstaller di D4). Bila sesi berakhir, UI memanggil perintah native `request_pairing_code` lalu pairing ulang sendiri. Bila mesin gagal start (misalnya CLI memegang data) atau berhenti mendadak, jendela error lokal menampilkan alasannya dengan tombol **Try again** dan **Close**. Teks shell masih berbahasa Inggris seperti UI; bahasa UI diputuskan di D3.
 
 ## Keputusan atas pertanyaan terbuka (disetujui 2026-10-09)
 
@@ -147,7 +147,7 @@ Setiap tahap diakhiri verifikasi, lalu commit dan push.
 | D0 ✅ | Prasyarat: pengguna memasang Visual Studio Build Tools (Desktop development with C++). `AGENT.md` diperbarui: desktop wrapper masuk cakupan, target Windows dulu | `cargo build` contoh Tauri berhasil di mesin lokal |
 | D1a ✅ | Persiapan daemon yang tidak memerlukan Rust: pemilihan Node dari PATH dengan cadangan Node bawaan, kunci satu instance per database, sidecar berhenti bila pipa induk tertutup, dan pairing otomatis dari nilai yang disuntikkan shell | Unit/integration test baru lulus; suite tiga OS tetap lulus |
 | D1 ✅ | Spike: shell Tauri menjalankan sidecar, pairing otomatis, jendela menampilkan dashboard yang ada, dialog folder berfungsi | Demo lokal Windows; keempat asumsi di atas terjawab |
-| D2 | Siklus hidup: tray, tutup ke tray, Keluar dengan shutdown rapi, single-instance, sidecar mati bila shell hilang, layar error bila sidecar gagal | Test otomatis: Keluar menghentikan service; kill shell tidak meninggalkan proses |
+| D2 ✅ | Siklus hidup: tray, tutup ke tray, Keluar dengan shutdown rapi, single-instance, sidecar mati bila shell hilang, layar error bila sidecar gagal | Test otomatis: Keluar menghentikan service; kill shell tidak meninggalkan proses |
 | D3 | UX desktop: onboarding, kartu script, panel Lanjutan, Grup, log, tombol Buka, bahasa sederhana | Browser/UI test diperbarui; review tampilan oleh pengguna |
 | D4 | Packaging: Node + daemon dibundel, installer NSIS per-user, workflow CI Windows yang membangun installer lalu menginstal diam-diam, meluncurkan, dan menguninstal | Installer lulus smoke test di runner Windows; ukuran tercatat |
 | D5 | Dokumentasi pengguna (cara install, peringatan SmartScreen, cara uninstall) dan rilis 0.2.0 | Rilis dibuat setelah konfirmasi pengguna |

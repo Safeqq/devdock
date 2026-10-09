@@ -5,52 +5,212 @@ mod sidecar;
 
 use sidecar::Sidecar;
 use tauri::ipc::CapabilityBuilder;
-use tauri::{Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{
+    AppHandle, Manager, RunEvent, State, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+};
+
+const MAIN_WINDOW: &str = "main";
+const ERROR_WINDOW: &str = "error";
+/// Passed to a second launch to stop the running app, for example by an uninstaller.
+const QUIT_ARGUMENT: &str = "--quit";
+
+/// Gives the dashboard a fresh pairing code after its session ended, so the window signs back in
+/// without the manual pairing form.
+#[tauri::command]
+async fn request_pairing_code(sidecar: State<'_, Sidecar>) -> Result<String, String> {
+    sidecar.request_pairing_code()
+}
+
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
+#[tauri::command]
+fn restart_app(app: AppHandle) {
+    // Restarting from the main thread skips RunEvent::Exit, so release what that event would:
+    // the daemon (and its instance lock) and the single-instance mutex the new process checks.
+    if let Some(sidecar) = app.try_state::<Sidecar>() {
+        sidecar.stop();
+    }
+    tauri_plugin_single_instance::destroy(&app);
+    app.restart();
+}
+
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+/// Replaces the dashboard with a local page explaining why DevDock cannot run, offering to retry
+/// or close.
+fn show_error(app: &AppHandle, message: &str) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+        let _ = window.destroy();
+    }
+    if let Some(window) = app.get_webview_window(ERROR_WINDOW) {
+        let _ = window.set_focus();
+        return;
+    }
+    let script = format!(
+        "window.__DEVDOCK_ERROR__ = {};",
+        serde_json::to_string(message).unwrap_or_else(|_| "\"\"".into())
+    );
+    let Ok(window) =
+        WebviewWindowBuilder::new(app, ERROR_WINDOW, WebviewUrl::App("error.html".into()))
+            .title("DevDock")
+            .inner_size(560.0, 340.0)
+            .resizable(false)
+            .initialization_script(script)
+            .build()
+    else {
+        app.exit(1);
+        return;
+    };
+    // There is nothing left to keep in the tray once this window is closed.
+    let exit_handle = app.clone();
+    window.on_window_event(move |event| {
+        if let WindowEvent::CloseRequested { .. } = event {
+            exit_handle.exit(1);
+        }
+    });
+}
+
+fn build_tray(app: &AppHandle) -> tauri::Result<()> {
+    let open = MenuItem::with_id(app, "open", "Open DevDock", true, None::<&str>)?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let quit = MenuItem::with_id(
+        app,
+        "quit",
+        "Quit DevDock (stops all services)",
+        true,
+        None::<&str>,
+    )?;
+    let menu = Menu::with_items(app, &[&open, &separator, &quit])?;
+    let mut tray = TrayIconBuilder::with_id("devdock")
+        .tooltip("DevDock")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "open" => show_main_window(app),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_main_window(tray.app_handle());
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+    tray.build(app)?;
+    Ok(())
+}
+
+fn open_dashboard(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    let exit_handle = app.clone();
+    let (sidecar, ready) = Sidecar::start(move || {
+        let handle = exit_handle.clone();
+        let _ = exit_handle.run_on_main_thread(move || {
+            show_error(
+                &handle,
+                "The DevDock engine stopped unexpectedly. Services it was running may have stopped too.",
+            );
+        });
+    })?;
+    app.manage(sidecar);
+    let origin = Url::parse(&ready.origin)?;
+
+    // Native features are granted only to the exact daemon origin, decided at runtime because the
+    // daemon listens on a random loopback port.
+    app.add_capability(
+        CapabilityBuilder::new("daemon-origin")
+            .remote(format!("{}/*", ready.origin))
+            .local(false)
+            .window(MAIN_WINDOW)
+            .permission("core:default")
+            .permission("dialog:allow-open")
+            .permission("allow-request-pairing-code"),
+    )?;
+
+    // The single-use pairing code reaches the page through an initialization script, never through
+    // the URL. serde_json produces a safely quoted JavaScript string literal.
+    let pairing = format!(
+        "window.__DEVDOCK_DESKTOP__ = {{ pairingCode: {} }};",
+        serde_json::to_string(&ready.pairing_code)?
+    );
+    let allowed_origin = origin.origin();
+    let window = WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::External(origin))
+        .title("DevDock")
+        .inner_size(1280.0, 820.0)
+        .min_inner_size(960.0, 640.0)
+        .initialization_script(pairing)
+        // Keep the window on the daemon's dashboard; anything else is refused.
+        .on_navigation(move |url| url.origin() == allowed_origin)
+        .build()?;
+    // Closing the window keeps DevDock and its services running in the tray.
+    let hide_target = window.clone();
+    window.on_window_event(move |event| {
+        if let WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            let _ = hide_target.hide();
+        }
+    });
+    Ok(())
+}
 
 fn main() {
     let app = tauri::Builder::default()
+        // Must be registered first: a second launch hands its arguments to this instance and exits.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if args.iter().any(|argument| argument == QUIT_ARGUMENT) {
+                app.exit(0);
+            } else {
+                show_main_window(app);
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![
+            request_pairing_code,
+            quit_app,
+            restart_app
+        ])
         .setup(|app| {
-            let (sidecar, ready) = Sidecar::start()?;
-            app.manage(sidecar);
-            let origin = Url::parse(&ready.origin)?;
-
-            // Native features are granted only to the exact daemon origin, decided at runtime
-            // because the daemon listens on a random loopback port.
-            app.add_capability(
-                CapabilityBuilder::new("daemon-origin")
-                    .remote(format!("{}/*", ready.origin))
-                    .local(false)
-                    .window("main")
-                    .permission("core:default")
-                    .permission("dialog:allow-open"),
-            )?;
-
-            // The single-use pairing code reaches the page through an initialization script, never
-            // through the URL. serde_json produces a safely quoted JavaScript string literal.
-            let pairing = format!(
-                "window.__DEVDOCK_DESKTOP__ = {{ pairingCode: {} }};",
-                serde_json::to_string(&ready.pairing_code)?
-            );
-            let allowed_origin = origin.origin();
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::External(origin))
-                .title("DevDock")
-                .inner_size(1280.0, 820.0)
-                .min_inner_size(960.0, 640.0)
-                .initialization_script(pairing)
-                // Keep the window on the daemon's dashboard; anything else is refused.
-                .on_navigation(move |url| url.origin() == allowed_origin)
-                .build()?;
+            // `--quit` with no running instance has nothing to stop.
+            if std::env::args().any(|argument| argument == QUIT_ARGUMENT) {
+                app.handle().exit(0);
+                return Ok(());
+            }
+            build_tray(app.handle())?;
+            if let Err(error) = open_dashboard(app.handle()) {
+                show_error(app.handle(), &error.to_string());
+            }
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("DevDock failed to start");
 
-    app.run(|handle, event| {
-        if let RunEvent::Exit = event {
+    app.run(|handle, event| match event {
+        // Without a visible window Tauri would exit; DevDock stays in the tray until Quit.
+        RunEvent::ExitRequested {
+            code: None, api, ..
+        } => api.prevent_exit(),
+        RunEvent::Exit => {
             if let Some(sidecar) = handle.try_state::<Sidecar>() {
                 sidecar.stop();
             }
         }
+        _ => {}
     });
 }

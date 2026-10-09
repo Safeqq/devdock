@@ -10,6 +10,7 @@ All notable changes to DevDock will be documented in this file.
 - Automatic dashboard pairing from a code injected by the desktop shell, without the pairing form or a code in the URL.
 - A single-instance lock per data directory, so the desktop app and CLI cannot manage the same services at once.
 - A development build of the Windows desktop shell (Tauri v2) that runs the daemon as a hidden sidecar, pairs its window automatically, grants the native folder dialog only to the daemon's exact origin, blocks navigation away from it, and stops the daemon when the app exits.
+- Desktop app lifecycle: the window hides to a tray icon with Open and Quit, a second launch shows the existing window, `--quit` stops a running instance, the window signs back in by itself when its session ends, and an error window with Try again and Close appears when the engine cannot start or stops unexpectedly.
 
 ### Changed
 

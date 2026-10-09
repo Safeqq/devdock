@@ -114,13 +114,13 @@ Inspect remaining decisions with `npm run release:inspect -- --target local`, re
 
 ## Desktop app (in development)
 
-DevDock is becoming a Windows desktop app built with Tauri v2: the window runs the dashboard, starts the daemon as a hidden sidecar, and pairs automatically, so no browser, URL, or pairing code is involved. It is a development build for now; an installer is planned (see [docs/desktop-plan.md](docs/desktop-plan.md)).
+DevDock is becoming a Windows desktop app built with Tauri v2: the window runs the dashboard, starts the daemon as a hidden sidecar, and pairs automatically, so no browser, URL, or pairing code is involved. Closing the window keeps DevDock and its services running in the tray; **Quit DevDock** in the tray menu stops them. Opening DevDock again shows the existing window, and `devdock-desktop.exe --quit` stops a running instance. It is a development build for now; an installer is planned (see [docs/desktop-plan.md](docs/desktop-plan.md)).
 
 Building it requires Rust and the Visual Studio Build Tools workload "Desktop development with C++". Then:
 
 ```text
 npm run desktop:run      # build the daemon and the desktop shell, then open the app
-npm run desktop:verify   # launch it with isolated data and check pairing, permissions, a real service, and shutdown
+npm run desktop:verify   # launch it with isolated data and check pairing, permissions, a real service, tray, and error handling
 ```
 
 ## Fixture control

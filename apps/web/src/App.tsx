@@ -9,7 +9,7 @@ import {
   ServiceResponseSchema,
   SessionResponseSchema,
 } from "@devdock/contracts";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   apiGet,
@@ -33,6 +33,10 @@ declare global {
   interface Window {
     // Set by the desktop shell's initialization script; never part of a URL or stored on disk.
     __DEVDOCK_DESKTOP__?: { pairingCode?: string };
+    // The Tauri desktop shell's global API, present only inside the desktop app.
+    __TAURI__?: {
+      core?: { invoke?: (command: string, args?: Record<string, unknown>) => Promise<unknown> };
+    };
   }
 }
 
@@ -44,6 +48,42 @@ function takeDesktopPairingCode(): string | null {
   const code = desktop.pairingCode;
   delete desktop.pairingCode;
   return typeof code === "string" && code.length > 0 ? code : null;
+}
+
+// Asks the desktop shell for a fresh single-use pairing code. Returns null outside the desktop app.
+async function requestDesktopPairingCode(): Promise<string | null> {
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (typeof invoke !== "function") return null;
+  try {
+    const code = await invoke("request_pairing_code");
+    return typeof code === "string" && code.length > 0 ? code : null;
+  } catch {
+    return null;
+  }
+}
+
+async function pairWithCode(code: string): Promise<string | null> {
+  try {
+    const paired = await apiPost("/api/pair", { code }, (value) =>
+      SessionResponseSchema.parse(value),
+    );
+    return paired.csrfToken;
+  } catch {
+    return null;
+  }
+}
+
+// Signs the desktop window in without the pairing form. The startup code injected by the shell is
+// tried first; it is re-injected on every reload, so once it is used up the shell is asked for a
+// fresh one. Resolves to the CSRF token, or null so the caller shows the manual form instead.
+async function pairDesktopWindow(): Promise<string | null> {
+  const injected = takeDesktopPairingCode();
+  if (injected !== null) {
+    const csrfToken = await pairWithCode(injected);
+    if (csrfToken !== null) return csrfToken;
+  }
+  const fresh = await requestDesktopPairingCode();
+  return fresh === null ? null : pairWithCode(fresh);
 }
 
 function errorMessage(caught: unknown): string {
@@ -942,7 +982,24 @@ function Dashboard({
 
 export function App() {
   const [session, setSession] = useState<SessionState>({ kind: "checking" });
-  const onUnauthorized = useCallback(() => setSession({ kind: "pairing" }), []);
+  // Several requests can fail with 401 at once; one sign-in serves them all, because each new
+  // desktop pairing code invalidates the previous one.
+  const signingIn = useRef<Promise<void> | null>(null);
+  const signIn = useCallback((isCurrent: () => boolean) => {
+    signingIn.current ??= pairDesktopWindow()
+      .then((csrfToken) => {
+        if (!isCurrent()) return;
+        setSession(csrfToken === null ? { kind: "pairing" } : { kind: "ready", csrfToken });
+      })
+      .finally(() => {
+        signingIn.current = null;
+      });
+    return signingIn.current;
+  }, []);
+  const onUnauthorized = useCallback(() => {
+    setSession({ kind: "checking" });
+    void signIn(() => true);
+  }, [signIn]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -956,26 +1013,10 @@ export function App() {
           setSession({ kind: "error", message: errorMessage(caught) });
           return;
         }
-        const desktopCode = takeDesktopPairingCode();
-        if (desktopCode === null) {
-          setSession({ kind: "pairing" });
-          return;
-        }
-        // A rejected desktop code falls back to the manual pairing form.
-        void apiPost("/api/pair", { code: desktopCode }, (value) =>
-          SessionResponseSchema.parse(value),
-        )
-          .then((paired) => {
-            if (!controller.signal.aborted) {
-              setSession({ kind: "ready", csrfToken: paired.csrfToken });
-            }
-          })
-          .catch(() => {
-            if (!controller.signal.aborted) setSession({ kind: "pairing" });
-          });
+        void signIn(() => !controller.signal.aborted);
       });
     return () => controller.abort();
-  }, []);
+  }, [signIn]);
 
   return (
     <div className="app-shell">

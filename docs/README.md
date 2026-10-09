@@ -12,7 +12,7 @@ The documentation separates current behavior, evidence, and design decisions:
 - [Demo runbook](demo.md) provides the repeatable Phase 7 demonstration sequence.
 - [Portfolio usage](portfolio.md) records trusted-project use without storing project secrets.
 - [Progress](progress.md) is the chronological implementation and verification checkpoint.
-- [Desktop plan](desktop-plan.md) is the draft, not yet approved, plan for turning DevDock into a Tauri desktop app (Indonesian).
+- [Desktop plan](desktop-plan.md) is the approved plan for turning DevDock into a Tauri desktop app, Windows first (Indonesian).
 
 Architecture decisions are recorded under [`adr/`](adr/):
 

@@ -1,6 +1,6 @@
 # AGENT.md — DevDock
 
-Panduan coding agent dan belajar bertahap. Keputusan terbaru: React + Node.js/TypeScript, dashboard browser dengan daemon lokal, target Windows native, macOS, dan Linux. Tidak menggunakan Flutter. Status awal: perencanaan; belum ada implementasi atau platform yang dinyatakan terverifikasi.
+Panduan coding agent dan belajar bertahap. Keputusan terbaru (2026-10-09): DevDock menjadi aplikasi desktop Tauri v2 yang menjalankan daemon Node.js/TypeScript sebagai sidecar dan menampilkan UI React di jendela native; Windows lebih dahulu, macOS dan Linux menyusul bertahap. Rencana dan keputusan rinci ada di `docs/desktop-plan.md`. Roadmap v1 berbasis dashboard browser (Fase 0–7) sudah terverifikasi pada tiga OS dan dirilis sebagai 0.1.0. Tidak menggunakan Flutter atau Electron.
 
 ## 1. Penggunaan dan prioritas
 
@@ -34,7 +34,7 @@ Alur utama: pilih proyek → pilih service/profil → Start → lihat status dan
 - Export konfigurasi non-secret.
 - Packaging serta integration tests native pada tiga keluarga OS.
 
-Ditunda: Flutter, desktop wrapper, terminal interaktif/PTY, cloud sync, remote execution, akun tim, install dependency otomatis, Docker control, Git overview, AI debugger, Redis, broker, dan Kubernetes. Database proyek dapat menjadi dependensi eksternal dengan readiness check; v1 tidak mengambil alih proses database yang tidak dimulai DevDock.
+Ditunda: Flutter, terminal interaktif/PTY, cloud sync, remote execution, akun tim, install dependency otomatis, Docker control, Git overview, AI debugger, Redis, broker, dan Kubernetes. Database proyek dapat menjadi dependensi eksternal dengan readiness check; v1 tidak mengambil alih proses database yang tidak dimulai DevDock.
 
 DevDock menjalankan kode dengan hak pengguna OS. Ia bukan sandbox untuk repository tak tepercaya dan bukan process manager produksi.
 
@@ -55,7 +55,7 @@ Saat implementasi dimulai, buat `docs/progress.md` dengan fase/subfase aktif, pe
 
 ## 4. Arsitektur yang harus dijaga
 
-Gunakan backend modular monolith dalam satu daemon Node.js. Daemon menjalankan API dan supervisor; React SPA ditampilkan di browser. HTTP membawa command; SSE membawa status dan log. SQLite menyimpan konfigurasi dan histori, bukan jaminan bahwa PID lama masih hidup.
+Gunakan backend modular monolith dalam satu daemon Node.js. Daemon menjalankan API dan supervisor; React SPA ditampilkan di jendela aplikasi desktop (Fase 8) atau, untuk CLI 0.1.0, di browser. Shell desktop Tauri hanya mengelola jendela, sidecar, dan fitur native (dialog, tray, notifikasi); logika proses tetap di daemon. HTTP membawa command; SSE membawa status dan log. SQLite menyimpan konfigurasi dan histori, bukan jaminan bahwa PID lama masih hidup.
 
 | Lapisan | Tanggung jawab |
 |---|---|
@@ -74,6 +74,7 @@ Struktur target, dibuat hanya saat diperlukan:
 |---|---|
 | `apps/daemon/` | Entry CLI, API, application modules, supervisor composition |
 | `apps/web/` | UI projects, services, profiles, logs |
+| `apps/desktop/` | Shell Tauri v2 (Rust): jendela, sidecar daemon, tray, dialog, installer |
 | `packages/domain/` | State, graph, policy dan domain errors |
 | `packages/contracts/` | Runtime schemas, request/response/event types |
 | `packages/platform/` | Windows/POSIX process dan platform utilities |
@@ -269,6 +270,21 @@ Seluruh checkbox dimulai belum selesai. OS utama adalah tempat iterasi pertama; 
 **Verifikasi/gate:** CI tiga OS lulus, demo dapat diulang, keterbatasan tertulis, tidak ada secret atau klaim benchmark palsu. Publikasi repository/package mengikuti otorisasi pengguna; local tool tidak perlu di-host sebagai website publik.
 
 **Latihan:** jelaskan desain dalam dua menit. **Pertanyaan:** kapan desktop wrapper atau broker benar-benar diperlukan?
+
+### Fase 8 — Aplikasi desktop (Windows dahulu)
+
+**Prasyarat:** rilis 0.1.0; Visual Studio Build Tools dengan workload C++ di mesin pengembang. **Belajar:** proses sidecar, siklus hidup aplikasi desktop, capability Tauri, dan packaging installer.
+
+- [ ] 8.0 Catat keputusan di `docs/desktop-plan.md` dan dokumen ini; siapkan toolchain Rust/MSVC.
+- [ ] 8.1 Spike: shell Tauri menjalankan sidecar, pairing otomatis tanpa URL, dialog folder; jawab asumsi di rencana.
+- [ ] 8.2 Siklus hidup: tray, tutup ke tray, Keluar dengan shutdown rapi, single-instance, sidecar berhenti bila shell hilang.
+- [ ] 8.3 UX desktop: onboarding, kartu script, panel Lanjutan, Grup, log, bahasa sederhana.
+- [ ] 8.4 Installer NSIS per-user dan workflow CI Windows yang menginstal, meluncurkan, dan menguninstal.
+- [ ] 8.5 Dokumentasi pengguna dan rilis 0.2.0 setelah konfirmasi pengguna.
+
+**Verifikasi/gate:** installer lulus smoke test di runner Windows; Keluar menghentikan service milik DevDock; kill shell tidak meninggalkan daemon atau service; suite kontrak tiga OS untuk daemon tetap lulus.
+
+**Latihan:** gambarkan alur dari klik ikon sampai service berjalan. **Pertanyaan:** mengapa pairing otomatis tidak boleh lewat URL, dan apa yang terjadi pada service bila shell desktop crash?
 
 ## 11. Pengujian dan command
 

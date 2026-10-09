@@ -1,6 +1,6 @@
-# Rencana DevDock Desktop (draf untuk ditinjau)
+# Rencana DevDock Desktop
 
-Status: **draf, belum dikerjakan.** Dokumen ini menunggu persetujuan pengguna sebelum ada kode yang diubah.
+Status: **disetujui pengguna pada 2026-10-09** beserta usulan untuk ketiga pertanyaan terbuka. Pekerjaan dilakukan bertahap sesuai tabel tahapan; Fase 8 di `AGENT.md` melacak kemajuannya.
 
 ## Keputusan pengguna (2026-10-09)
 
@@ -118,11 +118,11 @@ Asumsi berikut belum terbukti dan bisa mengubah desain:
 3. Helper Job Object (PowerShell/C#) tetap berjalan ketika daemon diluncurkan sebagai sidecar tanpa konsol.
 4. Ukuran installer dengan Node dibundel. Perkiraan 40–60 MB, perlu diukur.
 
-## Pertanyaan yang masih terbuka
+## Keputusan atas pertanyaan terbuka (disetujui 2026-10-09)
 
-1. **Node untuk menjalankan proyek Anda.** Saat ini DevDock menjalankan `npm run` memakai Node miliknya sendiri. Di aplikasi desktop, proyek yang butuh Node 18/20 bisa gagal. Usul saya: pakai Node/npm yang terpasang di komputer (dari PATH) bila ada, dan pakai Node bawaan DevDock bila tidak ada. Ini perubahan perilaku, jadi perlu persetujuan.
-2. **CLI npm 0.1.0.** Tarball CLI tetap dibangun sebagai jalur sekunder, atau dihentikan setelah aplikasi desktop tersedia? Usul saya: tetap ada, tetapi README mengutamakan aplikasi desktop.
-3. **Dua DevDock bersamaan.** Aplikasi desktop dan CLI memakai database yang sama di `%LOCALAPPDATA%\DevDock`. Usul saya: kunci satu instance per database agar keduanya tidak mengelola service yang sama.
+1. **Node untuk menjalankan proyek.** DevDock memakai Node/npm yang terpasang di komputer (ditemukan dari PATH) bila ada, dan Node bawaan DevDock bila tidak ada. Node yang dipakai harus terlihat oleh pengguna.
+2. **CLI npm 0.1.0.** Tarball CLI tetap dibangun sebagai jalur sekunder; README mengutamakan aplikasi desktop.
+3. **Dua DevDock bersamaan.** Aplikasi desktop dan CLI memakai database yang sama di `%LOCALAPPDATA%\DevDock`, sehingga hanya satu instance per database yang boleh aktif.
 
 ## Tahapan
 
@@ -131,6 +131,7 @@ Setiap tahap diakhiri verifikasi, lalu commit dan push.
 | Tahap | Isi | Bukti selesai |
 |---|---|---|
 | D0 | Prasyarat: pengguna memasang Visual Studio Build Tools (Desktop development with C++). `AGENT.md` diperbarui: desktop wrapper masuk cakupan, target Windows dulu | `cargo build` contoh Tauri berhasil di mesin lokal |
+| D1a | Persiapan daemon yang tidak memerlukan Rust: pemilihan Node dari PATH dengan cadangan Node bawaan, kunci satu instance per database, sidecar berhenti bila pipa induk tertutup, dan pairing otomatis dari nilai yang disuntikkan shell | Unit/integration test baru lulus; suite tiga OS tetap lulus |
 | D1 | Spike: shell Tauri menjalankan sidecar, pairing otomatis, jendela menampilkan dashboard yang ada, dialog folder berfungsi | Demo lokal Windows; keempat asumsi di atas terjawab |
 | D2 | Siklus hidup: tray, tutup ke tray, Keluar dengan shutdown rapi, single-instance, sidecar mati bila shell hilang, layar error bila sidecar gagal | Test otomatis: Keluar menghentikan service; kill shell tidak meninggalkan proses |
 | D3 | UX desktop: onboarding, kartu script, panel Lanjutan, Grup, log, tombol Buka, bahasa sederhana | Browser/UI test diperbarui; review tampilan oleh pengguna |

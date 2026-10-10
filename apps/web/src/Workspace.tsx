@@ -186,8 +186,11 @@ export function Workspace({
     <div className="app">
       <aside className="sidebar" aria-label="Projects">
         <div className="brand">
-          <Logo />
-          DevDock
+          <span className="brand-name">
+            <Logo />
+            DevDock
+          </span>
+          <span className="brand-sub">Your local script runner</span>
         </div>
         <div className="side-head">
           <h2 className="side-label">Projects</h2>

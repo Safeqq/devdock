@@ -63,6 +63,7 @@ test("authenticated project API persists selections and only previews npm execut
     assert.equal(page.status, 200);
     assert.match(page.headers.get("content-type"), /text\/html/u);
     assert.match(page.headers.get("content-security-policy"), /script-src 'self'/u);
+    assert.match(page.headers.get("content-security-policy"), /font-src 'self'/u);
     const html = await page.text();
     const asset = html.match(/src="(\/assets\/[A-Za-z0-9._-]+\.js)"/u)?.[1];
     assert.ok(asset);

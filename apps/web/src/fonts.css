@@ -1,0 +1,43 @@
+/* Bundled typefaces (SIL Open Font License 1.1; see fonts-LICENSE.txt shipped with the build).
+   Latin woff2 files only: WebView2 and current browsers read woff2, and DevDock's text is English.
+   Served from the dashboard's own origin, so they work offline and need no font CDN. */
+@font-face {
+  font-family: "Libre Caslon Display";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("@fontsource/libre-caslon-display/files/libre-caslon-display-latin-400-normal.woff2")
+    format("woff2");
+}
+@font-face {
+  font-family: "Libre Caslon Text";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("@fontsource/libre-caslon-text/files/libre-caslon-text-latin-400-normal.woff2")
+    format("woff2");
+}
+@font-face {
+  font-family: "Libre Caslon Text";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("@fontsource/libre-caslon-text/files/libre-caslon-text-latin-400-italic.woff2")
+    format("woff2");
+}
+@font-face {
+  font-family: "Libre Caslon Text";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("@fontsource/libre-caslon-text/files/libre-caslon-text-latin-700-normal.woff2")
+    format("woff2");
+}
+@font-face {
+  font-family: "Libre Franklin";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("@fontsource-variable/libre-franklin/files/libre-franklin-latin-wght-normal.woff2")
+    format("woff2-variations");
+}

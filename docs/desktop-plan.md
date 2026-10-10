@@ -155,6 +155,13 @@ Yang dibangun:
 - **Sidebar:** jumlah script berjalan/gagal per proyek (`GET /api/runtime/summary`) dan versi Node.js yang menjalankan proyek (`GET /api/system`).
 - **Shell:** perintah `open_in_browser` dan `open_folder` hanya untuk origin daemon. Shell menolak alamat non-loopback, URL berkredensial, dan path yang bukan folder.
 
+Tema (2026-10-10): atas permintaan pengguna, tampilan beralih dari tema gelap mockup ke tema editorial terang ala https://www.roberttran.com.au/:
+- kertas krem dan tinta hitam;
+- font Caslon dan Franklin yang dibundel (OFL-1.1, bekerja offline);
+- garis tegas dan status bergaya stempel.
+
+Alur dan teks UI tidak berubah; screenshot di `docs/screenshots/d3/` sudah memakai tema ini.
+
 Belum ada di D3:
 
 - Menghapus service atau grup, dan mengedit grup.

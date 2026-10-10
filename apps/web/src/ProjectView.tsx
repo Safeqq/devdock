@@ -589,6 +589,7 @@ export function ProjectView({
       <div className="content-scroll">
         <header className="project-header">
           <div>
+            <p className="eyebrow">Project</p>
             <h1>{detail.project.displayName}</h1>
             <p className="path">
               <Icon name="folder" />
@@ -715,8 +716,11 @@ export function ProjectView({
             <p>
               <strong>Quick start:</strong> press <strong>Start</strong> on{" "}
               <code>{recommended}</code> — it's usually the script that runs your app while you
-              work. When its status turns <span className="pill ready small">Ready</span>, click{" "}
-              <strong>Open</strong> to see it in your browser.
+              work. When its status turns{" "}
+              <span className="nowrap">
+                <span className="pill ready small">Ready</span>,
+              </span>{" "}
+              click <strong>Open</strong> to see it in your browser.
             </p>
             <button
               className="btn icon-only ghost tiny"
@@ -729,7 +733,15 @@ export function ProjectView({
           </div>
         ) : null}
 
-        <h2 className="section-title">Scripts</h2>
+        <div className="section-head">
+          <div>
+            <p className="section-title">From package.json</p>
+            <h2>Scripts</h2>
+          </div>
+          <p className="section-hint">
+            Start runs a script · the gear holds optional settings · output appears below
+          </p>
+        </div>
         {main.length === 0 && discoveryError === null && discovery !== null ? (
           <div className="empty-card">
             <p>
@@ -763,22 +775,24 @@ export function ProjectView({
         {allEntries.length >= 2 || detail.profiles.length > 0 ? (
           <>
             <div className="section-head">
-              <h2 className="section-title">Groups</h2>
-              {allEntries.length >= 2 ? (
-                <button
-                  className="btn ghost tiny"
-                  type="button"
-                  onClick={() => setCreatingGroup(true)}
-                >
-                  <Icon name="plus" />
-                  New group
-                </button>
-              ) : null}
+              <div>
+                <p className="section-title">One click, several scripts</p>
+                <h2>Groups</h2>
+              </div>
+              <div className="section-actions">
+                <p className="section-hint">For example your API first, then the website</p>
+                {allEntries.length >= 2 ? (
+                  <button className="btn tiny" type="button" onClick={() => setCreatingGroup(true)}>
+                    <Icon name="plus" />
+                    New group
+                  </button>
+                ) : null}
+              </div>
             </div>
             {detail.profiles.length === 0 ? (
               <p className="hint">
-                Start several scripts with one click — for example your API first, then the website
-                that uses it.
+                No groups yet. A group starts several scripts with one click, in the order you
+                choose — press <strong>New group</strong> to make one.
               </p>
             ) : (
               <div className="cards">

@@ -167,7 +167,7 @@ export function createLocalApiServer(options: LocalApiOptions = {}) {
     reply.header("x-frame-options", "DENY");
     reply.header(
       "content-security-policy",
-      "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+      "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     );
     const origin = expectedOrigin();
     if (origin === null || request.headers.host !== origin.slice("http://".length)) {

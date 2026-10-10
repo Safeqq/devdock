@@ -130,23 +130,26 @@ export function OutputPanel({
   return (
     <section className="output" aria-label="Script output">
       <div className="output-head">
-        <div className="tabs" role="tablist" aria-label="Scripts with output">
-          {tabs.map((tab) => (
-            <button
-              key={tab.serviceId}
-              className={tab === selected ? "tab active" : "tab"}
-              type="button"
-              role="tab"
-              aria-selected={tab === selected}
-              onClick={() => {
-                followTail.current = true;
-                onSelect(tab.serviceId);
-              }}
-            >
-              <span className={`dot ${tab.tone}`} aria-hidden="true" />
-              {tab.title}
-            </button>
-          ))}
+        <div className="output-tabs">
+          <span className="output-label">Output</span>
+          <div className="tabs" role="tablist" aria-label="Scripts with output">
+            {tabs.map((tab) => (
+              <button
+                key={tab.serviceId}
+                className={tab === selected ? "tab active" : "tab"}
+                type="button"
+                role="tab"
+                aria-selected={tab === selected}
+                onClick={() => {
+                  followTail.current = true;
+                  onSelect(tab.serviceId);
+                }}
+              >
+                <span className={`dot ${tab.tone}`} aria-hidden="true" />
+                {tab.title}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="tools">
           <button

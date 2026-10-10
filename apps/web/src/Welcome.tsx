@@ -18,7 +18,7 @@ function ScriptExplainer() {
 function Steps() {
   return (
     <ol className="step-cards">
-      <li>
+      <li className="step">
         <span className="step-icon">
           <Icon name="folder" />
         </span>
@@ -28,7 +28,7 @@ function Steps() {
           Pick the folder that contains <code>package.json</code>.
         </span>
       </li>
-      <li>
+      <li className="step">
         <span className="step-icon">
           <Icon name="play" />
         </span>
@@ -36,7 +36,7 @@ function Steps() {
         <strong>Press Start</strong>
         <span>DevDock runs the script and shows what it prints.</span>
       </li>
-      <li>
+      <li className="step">
         <span className="step-icon">
           <Icon name="globe" />
         </span>
@@ -59,23 +59,43 @@ function TrustNote() {
   );
 }
 
-// First launch: nothing has been added yet.
+function today(): string {
+  return new Date().toLocaleDateString("en-GB", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+}
+
+// First launch: nothing has been added yet. Laid out like a front page: a dateline, a headline,
+// what a script is, the three steps, and one obvious button.
 export function Welcome({ onAddProject }: { onAddProject: () => void }) {
   return (
     <main className="welcome">
       <div className="welcome-inner">
-        <Logo big />
-        <h1>Welcome to DevDock</h1>
-        <p className="lead">
-          Run your project's scripts with a click — no terminal windows to juggle.
+        <p className="dateline">
+          <span>DevDock · your local script runner</span>
+          <span>{today()}</span>
+          <span>No terminal needed</span>
         </p>
+        <div className="welcome-head">
+          <Logo big />
+          <h1>Welcome to DevDock</h1>
+          <p className="lead">
+            Run your project's scripts with a click — no terminal windows to juggle.
+          </p>
+        </div>
+        <div className="double-rule" aria-hidden="true" />
         <ScriptExplainer />
         <Steps />
-        <button className="btn primary large" type="button" onClick={onAddProject}>
-          <Icon name="folder" />
-          Choose a project folder
-        </button>
-        <TrustNote />
+        <div className="welcome-cta">
+          <button className="btn primary large" type="button" onClick={onAddProject}>
+            <Icon name="folder" />
+            Choose a project folder
+          </button>
+          <TrustNote />
+        </div>
       </div>
     </main>
   );

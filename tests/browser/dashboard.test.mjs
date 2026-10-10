@@ -193,6 +193,15 @@ test("browser pairs, previews a folder, and manages settings without executing a
     assert.equal((await fetch(`${origin}/api/projects`)).status, 401);
     await pairBrowser(page, api);
     await page.getByRole("heading", { name: "Welcome to DevDock" }).waitFor();
+    // The bundled typefaces load from the dashboard's own origin; a CSP that blocks them leaves
+    // their faces in the "error" state.
+    const fontStates = await page.evaluate(async () => {
+      await document.fonts.ready;
+      return [...document.fonts]
+        .filter((face) => face.family.replaceAll('"', "") === "Libre Caslon Display")
+        .map((face) => face.status);
+    });
+    assert.deepEqual(fontStates, ["loaded"]);
     step("pair");
 
     await page.getByRole("button", { name: "Choose a project folder" }).click();

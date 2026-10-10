@@ -1,11 +1,16 @@
-// Installs the Windows desktop installer silently into a temporary folder, runs the installed app
-// the way a user would (no Node.js on PATH, no repository files), and uninstalls it while it is
-// still running. Checks that the bundled runtime and engine are used, a real npm script runs and
-// stops through the installed engine, the uninstaller stops the app and its scripts first, the
-// program files are removed, and the user's data is kept. The per-user default install folder,
-// %LOCALAPPDATA%DevDock, is also DevDock's data folder, so the check installs the same way under a
+// Installs the Windows desktop installer silently, runs what it installed the way a user would (no
+// Node.js on PATH, no repository files), and uninstalls it. Checks that the bundled runtime and
+// engine are used, a real npm script runs through the installed engine, the program files are
+// removed, and the user's data is kept. The per-user default install folder,
+// %LOCALAPPDATA%\DevDock, is also DevDock's data folder, so the check installs the same way under a
 // temporary LOCALAPPDATA instead of touching the real one.
-// Usage: node scripts/verify-desktop-installer.mjs [path-to-setup.exe]
+//
+// By default it opens the installed app's window, drives it over the WebView2 DevTools protocol,
+// and uninstalls while the app and its script are running, so the uninstaller's quit hook is
+// covered too. With --engine-only (used in CI, whose runner session cannot open the app's window)
+// it starts the installed engine on the bundled Node.js with the same command line the app uses,
+// checks the installed app handles --quit, and uninstalls after the engine has stopped.
+// Usage: node scripts/verify-desktop-installer.mjs [--engine-only] [path-to-setup.exe]
 // Without a path it checks the installer `npm run desktop:bundle` built for the current version.
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
@@ -14,6 +19,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
+import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
@@ -22,10 +28,13 @@ if (process.platform !== "win32") {
   console.error("The installer check runs on Windows only.");
   process.exit(2);
 }
+const arguments_ = process.argv.slice(2);
+const engineOnly = arguments_.includes("--engine-only");
+const installerArgument = arguments_.find((argument) => argument !== "--engine-only");
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const { version } = JSON.parse(readFileSync(join(repositoryRoot, "package.json"), "utf8"));
 const installer = resolve(
-  process.argv[2] ??
+  installerArgument ??
     join(
       repositoryRoot,
       "apps/desktop/src-tauri/target/release/bundle/nsis",
@@ -33,8 +42,7 @@ const installer = resolve(
     ),
 );
 if (!existsSync(installer)) {
-  console.error(`Installer not found: ${installer}
-Run npm run desktop:bundle first.`);
+  console.error(`Installer not found: ${installer}\nRun npm run desktop:bundle first.`);
   process.exit(2);
 }
 
@@ -71,7 +79,7 @@ async function waitFor(predicate, timeoutMs, message) {
     if (await predicate()) return;
     await delay(250);
   }
-  assert.fail(message);
+  assert.fail(typeof message === "function" ? message() : message);
 }
 
 async function freePort() {
@@ -80,6 +88,13 @@ async function freePort() {
   const { port } = server.address();
   await new Promise((resolveClose) => server.close(resolveClose));
   return port;
+}
+
+function portClosed(port) {
+  return fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(500) }).then(
+    () => false,
+    () => true,
+  );
 }
 
 // A running DevDock would receive this launch through the single-instance lock.
@@ -103,7 +118,27 @@ const dataRoot = join(workRoot, "Local App Data");
 const installDirectory = join(dataRoot, "DevDock");
 await mkdir(dataRoot);
 const installerBytes = statSync(installer).size;
+
+// The user's environment with a temporary profile folder and a PATH without any folder that holds
+// a Node.js executable, as on a computer that never installed Node.js.
+const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
+const pathValue = Object.entries(process.env).find(([key]) => key.toLowerCase() === "path")?.[1];
+const userEnvironment = {
+  ...Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([key]) => !/^(path|localappdata|appdata|npm_.*|node_.*)$/iu.test(key),
+    ),
+  ),
+  APPDATA: join(dataRoot, "Roaming"),
+  LOCALAPPDATA: dataRoot,
+  Path: (pathValue ?? join(systemRoot, "System32"))
+    .split(delimiter)
+    .filter((entry) => entry !== "" && !existsSync(join(entry, "node.exe")))
+    .join(delimiter),
+};
+
 let app;
+let engine;
 let browser;
 try {
   // NSIS reads /D only as the last argument and unquoted, even with spaces. Node quotes
@@ -120,13 +155,21 @@ try {
   assert.equal(executables.length, 1, `install folder has ${executables.join(", ")}`);
   const appPath = join(installDirectory, executables[0]);
   const bundledNode = join(installDirectory, "runtime", "node.exe");
+  const engineEntry = join(
+    installDirectory,
+    "engine",
+    "node_modules",
+    "devdock",
+    "bin",
+    "devdock.mjs",
+  );
   for (const path of [
     appPath,
     join(installDirectory, "uninstall.exe"),
     bundledNode,
     join(installDirectory, "runtime", "node_modules", "npm", "bin", "npm-cli.js"),
     join(installDirectory, "runtime", "LICENSE"),
-    join(installDirectory, "engine", "node_modules", "devdock", "bin", "devdock.mjs"),
+    engineEntry,
   ]) {
     assert.ok(existsSync(path), `missing ${path}`);
   }
@@ -135,82 +178,135 @@ try {
     `${(installerBytes / 1024 / 1024).toFixed(1)} MiB installer, ${executables[0]}`,
   );
 
-  // PATH without any Node.js, as on a computer that never installed it.
-  const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
-  const debugPort = 9400 + Math.floor(Math.random() * 400);
-  const environment = Object.fromEntries(
-    Object.entries(process.env).filter(
-      ([key]) => !/^(path|localappdata|appdata|npm_.*|node_.*)$/iu.test(key),
-    ),
-  );
-  const pathValue = Object.entries(process.env).find(([key]) => key.toLowerCase() === "path")?.[1];
-  app = spawn(appPath, [], {
-    env: {
-      ...environment,
-      APPDATA: join(dataRoot, "Roaming"),
-      LOCALAPPDATA: dataRoot,
-      // The user's PATH without any folder that holds a Node.js executable.
-      Path: (pathValue ?? join(systemRoot, "System32"))
-        .split(delimiter)
-        .filter((entry) => entry !== "" && !existsSync(join(entry, "node.exe")))
-        .join(delimiter),
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort}`,
-    },
-    stdio: ["ignore", "ignore", "pipe"],
-  });
-  let appStderr = "";
-  app.stderr.on("data", (chunk) => {
-    appStderr = (appStderr + chunk).slice(-8_000);
-  });
-  const diagnostics = () =>
-    JSON.stringify({
-      exitCode: app.exitCode,
-      stderr: appStderr,
-      processes: processesUnder(installDirectory),
+  // `get` and `post` reach the engine's API with a signed-in session, through the app's window or
+  // directly.
+  let client;
+  if (engineOnly) {
+    // The same command line the app's shell runs (see Launch in sidecar.rs).
+    engine = spawn(bundledNode, [engineEntry], {
+      env: { ...userEnvironment, DEVDOCK_CONTROL: "stdin", DEVDOCK_PORT: "0" },
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
     });
-  const started = Date.now();
-  for (;;) {
-    try {
-      browser = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`, {
-        timeout: 2_000,
+    let engineStderr = "";
+    engine.stderr.on("data", (chunk) => {
+      engineStderr = (engineStderr + chunk).slice(-8_000);
+    });
+    let ready;
+    createInterface({ input: engine.stdout }).on("line", (line) => {
+      try {
+        const event = JSON.parse(line);
+        if (event.type === "registry-api-ready") ready = event;
+      } catch {
+        // Not an event line.
+      }
+    });
+    await waitFor(
+      () => ready !== undefined,
+      60_000,
+      () => `the installed engine did not start: ${engineStderr}`,
+    );
+    const { origin } = ready;
+    const paired = await fetch(`${origin}/api/pair`, {
+      method: "POST",
+      headers: { origin, "content-type": "application/json" },
+      body: JSON.stringify({ code: ready.pairingCode }),
+    });
+    assert.equal(paired.status, 200);
+    const cookie = paired.headers.get("set-cookie").split(";")[0];
+    const { csrfToken } = await paired.json();
+    client = {
+      get: async (path) => (await fetch(`${origin}${path}`, { headers: { cookie } })).json(),
+      post: async (path, body) =>
+        (
+          await fetch(`${origin}${path}`, {
+            method: "POST",
+            headers: {
+              origin,
+              cookie,
+              "x-devdock-csrf": csrfToken,
+              "content-type": "application/json",
+            },
+            body: JSON.stringify(body),
+          })
+        ).json(),
+    };
+    check("the installed engine starts on the bundled Node.js and pairs");
+  } else {
+    const debugPort = 9400 + Math.floor(Math.random() * 400);
+    app = spawn(appPath, [], {
+      env: {
+        ...userEnvironment,
+        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort}`,
+      },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let appStderr = "";
+    app.stderr.on("data", (chunk) => {
+      appStderr = (appStderr + chunk).slice(-8_000);
+    });
+    const diagnostics = () =>
+      JSON.stringify({
+        exitCode: app.exitCode,
+        stderr: appStderr,
+        processes: processesUnder(installDirectory),
       });
-      break;
-    } catch {
-      assert.equal(
-        app.exitCode,
-        null,
-        `installed app exited before its window opened: ${diagnostics()}`,
-      );
-      assert.ok(
-        Date.now() - started < 90_000,
-        `WebView2 DevTools endpoint did not open: ${diagnostics()}`,
-      );
-      await delay(500);
+    const started = Date.now();
+    for (;;) {
+      try {
+        browser = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`, {
+          timeout: 2_000,
+        });
+        break;
+      } catch {
+        assert.equal(app.exitCode, null, `installed app exited early: ${diagnostics()}`);
+        assert.ok(
+          Date.now() - started < 90_000,
+          `WebView2 DevTools endpoint did not open: ${diagnostics()}`,
+        );
+        await delay(500);
+      }
     }
+    let page;
+    await waitFor(
+      () => {
+        page = browser
+          .contexts()
+          .flatMap((context) => context.pages())
+          .find((candidate) => candidate.url().startsWith("http://127.0.0.1:"));
+        return page !== undefined;
+      },
+      20_000,
+      "the installed app did not load its dashboard",
+    );
+    await page.getByRole("heading", { name: "Welcome to DevDock" }).waitFor({ timeout: 30_000 });
+    client = {
+      get: (path) => page.evaluate(async (path) => (await fetch(path)).json(), path),
+      post: (path, body) =>
+        page.evaluate(
+          async ([path, body]) => {
+            const { csrfToken } = await (await fetch("/api/session")).json();
+            const response = await fetch(path, {
+              method: "POST",
+              headers: { "content-type": "application/json", "x-devdock-csrf": csrfToken },
+              body: JSON.stringify(body),
+            });
+            return response.json();
+          },
+          [path, body],
+        ),
+    };
+    check("installed app opens its window and signs in", `${Date.now() - started} ms`);
   }
-  let page;
-  await waitFor(
-    () => {
-      page = browser
-        .contexts()
-        .flatMap((context) => context.pages())
-        .find((candidate) => candidate.url().startsWith("http://127.0.0.1:"));
-      return page !== undefined;
-    },
-    20_000,
-    "the installed app did not load its dashboard",
-  );
-  await page.getByRole("heading", { name: "Welcome to DevDock" }).waitFor({ timeout: 30_000 });
-  check("installed app opens its window and signs in", `${Date.now() - started} ms`);
 
-  const sidecars = processesUnder(installDirectory).filter((entry) =>
+  const engines = processesUnder(installDirectory).filter((entry) =>
     entry.path.toLowerCase().endsWith("\\runtime\\node.exe"),
   );
-  assert.equal(sidecars.length, 1, JSON.stringify(sidecars));
-  const system = await page.evaluate(async () => (await fetch("/api/system")).json());
+  assert.equal(engines.length, 1, JSON.stringify(engines));
+  const system = await client.get("/api/system");
   assert.equal(system.projectNode.source, "daemon");
   assert.equal(system.projectNode.version, `v${process.versions.node}`);
-  check("the engine runs on the bundled Node.js, which projects use when PATH has none");
+  check("projects use the bundled Node.js when PATH has none");
 
   const servicePort = await freePort();
   const projectPath = join(workRoot, "installed check project");
@@ -227,53 +323,49 @@ createServer((request, response) => response.end("installed ok")).listen(${servi
 });
 `,
   );
-  const run = await page.evaluate(
-    async ({ projectPath }) => {
-      const { csrfToken } = await (await fetch("/api/session")).json();
-      const post = async (path, body) =>
-        (
-          await fetch(path, {
-            method: "POST",
-            headers: { "content-type": "application/json", "x-devdock-csrf": csrfToken },
-            body: JSON.stringify(body),
-          })
-        ).json();
-      const { project } = await post("/api/projects", { path: projectPath });
-      const { service } = await post(`/api/projects/${project.id}/services`, {
-        scriptName: "dev",
-      });
-      await post(`/api/services/${service.id}/start`, {});
-      let status;
-      for (let attempt = 0; attempt < 150; attempt += 1) {
-        status = await (await fetch(`/api/services/${service.id}/status`)).json();
-        if (status.appUrl || status.snapshot?.processState === "failed") break;
-        await new Promise((resolveDelay) => setTimeout(resolveDelay, 200));
-      }
-      return status;
+  const { project } = await client.post("/api/projects", { path: projectPath });
+  const { service } = await client.post(`/api/projects/${project.id}/services`, {
+    scriptName: "dev",
+  });
+  await client.post(`/api/services/${service.id}/start`, {});
+  let status;
+  await waitFor(
+    async () => {
+      status = await client.get(`/api/services/${service.id}/status`);
+      return status.appUrl != null || status.snapshot?.processState === "failed";
     },
-    { projectPath },
+    30_000,
+    () => `the script did not start: ${JSON.stringify(status)}`,
   );
-  assert.equal(run.snapshot?.processState, "running", JSON.stringify(run.snapshot));
-  assert.equal(run.appUrl, `http://localhost:${servicePort}/`);
+  assert.equal(status.snapshot?.processState, "running", JSON.stringify(status.snapshot));
+  assert.equal(status.appUrl, `http://localhost:${servicePort}/`);
   assert.equal(await (await fetch(`http://127.0.0.1:${servicePort}/`)).text(), "installed ok");
   check("an npm script runs through the bundled npm and the installed engine");
-  await browser.close();
-  browser = undefined;
 
-  // Uninstall while the app and its script are still running.
-  execFileSync(join(installDirectory, "uninstall.exe"), ["/S"], { stdio: "ignore" });
-  await waitFor(() => app.exitCode !== null, 60_000, "the uninstaller left DevDock running");
-  assert.equal(app.exitCode, 0, "DevDock did not quit cleanly during uninstall");
-  await waitFor(
-    () =>
-      fetch(`http://127.0.0.1:${servicePort}/`, { signal: AbortSignal.timeout(500) }).then(
-        () => false,
-        () => true,
-      ),
-    15_000,
-    "the running script outlived the uninstall",
-  );
-  check("uninstalling quits the running app, which stops its scripts first");
+  if (engineOnly) {
+    // Closing the control pipe is how the app's shell stops the engine.
+    engine.stdin.end();
+    await waitFor(() => engine.exitCode !== null, 30_000, "the engine did not stop");
+    assert.equal(engine.exitCode, 0);
+    await waitFor(() => portClosed(servicePort), 15_000, "the script outlived the engine");
+    check("closing the engine's control pipe stops it and its scripts");
+
+    // With no DevDock running, --quit (which the uninstaller sends first) exits at once.
+    const quit = spawn(appPath, ["--quit"], { env: userEnvironment, stdio: "ignore" });
+    await waitFor(() => quit.exitCode !== null, 30_000, "devdock-desktop --quit did not exit");
+    assert.equal(quit.exitCode, 0);
+    check("the installed app handles --quit");
+    execFileSync(join(installDirectory, "uninstall.exe"), ["/S"], { stdio: "ignore" });
+  } else {
+    await browser.close();
+    browser = undefined;
+    // Uninstall while the app and its script are still running.
+    execFileSync(join(installDirectory, "uninstall.exe"), ["/S"], { stdio: "ignore" });
+    await waitFor(() => app.exitCode !== null, 60_000, "the uninstaller left DevDock running");
+    assert.equal(app.exitCode, 0, "DevDock did not quit cleanly during uninstall");
+    await waitFor(() => portClosed(servicePort), 15_000, "the script outlived the uninstall");
+    check("uninstalling quits the running app, which stops its scripts first");
+  }
 
   await waitFor(
     () => !existsSync(appPath) && !existsSync(join(installDirectory, "engine")),
@@ -286,6 +378,7 @@ createServer((request, response) => response.end("installed ok")).listen(${servi
 } finally {
   await browser?.close().catch(() => {});
   if (app !== undefined && app.exitCode === null) app.kill();
+  if (engine !== undefined && engine.exitCode === null) engine.kill();
   for (const entry of processesUnder(installDirectory)) {
     try {
       process.kill(entry.pid);
@@ -299,6 +392,7 @@ createServer((request, response) => response.end("installed ok")).listen(${servi
 console.log(
   JSON.stringify({
     type: "desktop-installer-verified",
+    mode: engineOnly ? "engine-only" : "window",
     checks: results.length,
     installerBytes,
   }),

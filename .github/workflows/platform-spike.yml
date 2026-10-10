@@ -65,9 +65,13 @@ jobs:
       - run: npm run check:versions
       - name: Build the installer
         run: npm run desktop:bundle
-      - name: Record the WebView2 runtime
+      # The app's window cannot open in the runner's session, so CI runs the installed engine
+      # directly; `npm run desktop:verify-installer` without the flag also covers the window
+      # locally. These lines record why.
+      - name: Record the runner session and WebView2 runtime
         run: |
-          $keys = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'HKCU:\Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
-          foreach ($key in $keys) { if (Test-Path $key) { "$key = $((Get-ItemProperty $key).pv)" } else { "$key missing" } }
-      - name: Install, launch, and uninstall
-        run: npm run desktop:verify-installer
+          "session $([System.Diagnostics.Process]::GetCurrentProcess().SessionId), interactive $([Environment]::UserInteractive)"
+          $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          if (Test-Path $key) { "WebView2 $((Get-ItemProperty $key).pv)" } else { "WebView2 missing" }
+      - name: Install, run the installed engine, and uninstall
+        run: npm run desktop:verify-installer -- --engine-only

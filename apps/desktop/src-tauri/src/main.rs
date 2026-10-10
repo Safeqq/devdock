@@ -39,6 +39,34 @@ fn restart_app(app: AppHandle) {
     app.restart();
 }
 
+/// Accepts only plain http(s) addresses on this computer, without credentials. The dashboard checks
+/// this too; the shell checks again because the page is served over the network stack.
+fn loopback_app_url(value: &str) -> Option<Url> {
+    let url = Url::parse(value).ok()?;
+    let loopback = matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"));
+    let plain = url.username().is_empty() && url.password().is_none();
+    (matches!(url.scheme(), "http" | "https") && loopback && plain).then_some(url)
+}
+
+/// Opens a running project's address in the user's default browser, outside the DevDock window.
+#[tauri::command]
+fn open_in_browser(url: String) -> Result<(), String> {
+    let url = loopback_app_url(&url).ok_or("Only addresses on this computer can be opened")?;
+    tauri_plugin_opener::open_url(url.as_str(), None::<&str>).map_err(|error| error.to_string())
+}
+
+/// Shows a project folder in the file manager. Only existing directories are accepted, so the page
+/// cannot use this to launch a program.
+#[tauri::command]
+fn open_folder(path: String) -> Result<(), String> {
+    let folder = std::path::Path::new(&path);
+    let is_dir = std::fs::metadata(folder).is_ok_and(|details| details.is_dir());
+    if !folder.is_absolute() || !is_dir {
+        return Err("Only existing folders can be opened".into());
+    }
+    tauri_plugin_opener::open_path(folder, None::<&str>).map_err(|error| error.to_string())
+}
+
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
         let _ = window.show();
@@ -141,7 +169,9 @@ fn open_dashboard(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             .window(MAIN_WINDOW)
             .permission("core:default")
             .permission("dialog:allow-open")
-            .permission("allow-request-pairing-code"),
+            .permission("allow-request-pairing-code")
+            .permission("allow-open-in-browser")
+            .permission("allow-open-folder"),
     )?;
 
     // The single-use pairing code reaches the page through an initialization script, never through
@@ -184,7 +214,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             request_pairing_code,
             quit_app,
-            restart_app
+            restart_app,
+            open_in_browser,
+            open_folder
         ])
         .setup(|app| {
             // `--quit` with no running instance has nothing to stop.

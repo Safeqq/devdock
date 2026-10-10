@@ -5,6 +5,8 @@ fn main() {
             "request_pairing_code",
             "quit_app",
             "restart_app",
+            "open_in_browser",
+            "open_folder",
         ]),
     ))
     .expect("failed to run tauri-build");

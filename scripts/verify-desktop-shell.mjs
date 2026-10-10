@@ -167,7 +167,7 @@ try {
   const origin = new URL(page.url()).origin;
   check("window loads the daemon dashboard", origin);
 
-  await page.getByRole("heading", { name: "Projects" }).waitFor({ timeout: 20_000 });
+  await page.getByRole("heading", { name: "Welcome to DevDock" }).waitFor({ timeout: 20_000 });
   assert.equal(await page.getByLabel("Pairing code").count(), 0);
   check(
     "window pairs automatically without the pairing form",
@@ -216,6 +216,36 @@ try {
   const dialogResult = await page.evaluate(() => window.__dialogResult);
   assert.deepEqual(dialogResult, { ok: true, value: null });
   check("granted folder dialog opens natively and returns null when cancelled");
+
+  // Open and Open folder are granted, but the shell itself refuses anything that is not a
+  // loopback address or an existing folder. Nothing valid is opened here, so no window appears.
+  const refusals = await page.evaluate(
+    async (notepad) => {
+      const invoke = window.__TAURI__.core.invoke;
+      const outcome = (promise) =>
+        promise.then(
+          () => "opened",
+          (error) => String(error),
+        );
+      return {
+        remote: await outcome(invoke("open_in_browser", { url: "https://example.com/" })),
+        credentials: await outcome(
+          invoke("open_in_browser", { url: "http://user:secret@127.0.0.1:1/" }),
+        ),
+        file: await outcome(invoke("open_in_browser", { url: `file:///${notepad}` })),
+        executable: await outcome(invoke("open_folder", { path: notepad })),
+        relative: await outcome(invoke("open_folder", { path: "." })),
+      };
+    },
+    join(process.env.SystemRoot ?? "C:\\Windows", "notepad.exe"),
+  );
+  for (const key of ["remote", "credentials", "file"]) {
+    assert.match(refusals[key], /Only addresses on this computer/u, `${key}: ${refusals[key]}`);
+  }
+  for (const key of ["executable", "relative"]) {
+    assert.match(refusals[key], /Only existing folders/u, `${key}: ${refusals[key]}`);
+  }
+  check("Open and Open folder refuse non-loopback addresses and non-folders");
 
   await page.evaluate(() => {
     window.location.href = "https://example.com/";
@@ -313,6 +343,9 @@ createServer((request, response) => response.end("desktop ok")).listen(${service
   await page.getByRole("heading", { name: "Projects" }).waitFor({ timeout: 20_000 });
   assert.equal(await page.getByLabel("Pairing code").count(), 0);
   check("the window signs back in by itself after its session is replaced");
+  await page.getByRole("heading", { name: "Desktop check", level: 1 }).waitFor();
+  await page.getByRole("button", { name: "Open folder" }).waitFor();
+  check("the desktop project view offers Open folder");
 
   execFileSync("powershell.exe", [
     "-NoProfile",

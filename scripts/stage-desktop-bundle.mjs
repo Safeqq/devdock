@@ -1,6 +1,7 @@
 // Prepares the files the Windows installer carries next to the desktop shell:
 //   runtime/  the official Node.js distribution (node.exe, npm, and its LICENSE), pinned by version
 //             and SHA-256 in apps/desktop/runtime.json and to the toolchain in .node-version
+//   THIRD-PARTY-NOTICES.txt and LICENSE.txt, see scripts/desktop-notices.mjs
 //   engine/   the verified DevDock CLI package (artifacts/devdock-<version>.tgz from
 //             `npm run package:local`), installed offline with its bundled dependencies
 // The shell runs runtime/node.exe with engine/node_modules/devdock/bin/devdock.mjs. When a project
@@ -8,10 +9,25 @@
 // Usage (Windows): node scripts/stage-desktop-bundle.mjs
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  crateLicenseTexts,
+  enginePackages,
+  renderNotices,
+  shippedCrates,
+} from "./desktop-notices.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const stage = join(root, "apps", "desktop", "src-tauri", "bundle-input");
@@ -31,6 +47,8 @@ function run(executable, args, options = {}) {
     cwd: root,
     encoding: "utf8",
     windowsHide: true,
+    // cargo metadata alone is several megabytes.
+    maxBuffer: 64 * 1024 * 1024,
     ...options,
   });
   if (result.error !== undefined) throw result.error;
@@ -109,6 +127,32 @@ for (const leftover of ["package.json", "package-lock.json"]) {
 const nodeVersion = run(join(stage, "runtime", "node.exe"), ["--version"]).trim();
 if (nodeVersion !== `v${pinnedNode}`) fail(`Bundled node.exe reports ${nodeVersion}`);
 
+// DevDock's own license and the notices for everything else the installer carries.
+const metadata = JSON.parse(
+  run("cargo", [
+    "metadata",
+    "--format-version",
+    "1",
+    "--filter-platform",
+    "x86_64-pc-windows-msvc",
+    "--locked",
+    "--manifest-path",
+    join(root, "apps", "desktop", "src-tauri", "Cargo.toml"),
+  ]),
+);
+const standardText = (license) =>
+  readFileSync(join(root, "apps", "desktop", "licenses", `${license}.txt`), "utf8");
+const crates = shippedCrates(metadata).map((crate) => ({
+  ...crate,
+  texts: crateLicenseTexts(crate, standardText),
+}));
+const packages = enginePackages(join(engine, "node_modules"));
+await writeFile(
+  join(stage, "THIRD-PARTY-NOTICES.txt"),
+  renderNotices({ version: manifest.version, nodeVersion, packages, crates }),
+);
+await copyFile(join(root, "LICENSE"), join(stage, "LICENSE.txt"));
+
 console.log(
   JSON.stringify({
     type: "desktop-bundle-staged",
@@ -117,5 +161,7 @@ console.log(
     nodeArchiveSha256: runtime.node.sha256,
     engineTarball: `artifacts/devdock-${manifest.version}.tgz`,
     engineTarballSha256: sha256(await readFile(tarball)),
+    noticedCrates: crates.length,
+    noticedPackages: packages.length,
   }),
 );

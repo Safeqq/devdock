@@ -3,7 +3,9 @@
   "bundle": {
     "resources": {
       "bundle-input/runtime/": "runtime/",
-      "bundle-input/engine/": "engine/"
+      "bundle-input/engine/": "engine/",
+      "bundle-input/THIRD-PARTY-NOTICES.txt": "THIRD-PARTY-NOTICES.txt",
+      "bundle-input/LICENSE.txt": "LICENSE.txt"
     }
   }
 }

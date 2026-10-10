@@ -2,6 +2,7 @@
 
 The documentation separates current behavior, evidence, and design decisions:
 
+- [Install DevDock on Windows](install-windows.md) is the user guide for the desktop installer: SmartScreen, updating, uninstalling, and startup problems.
 - [Local API contract](local-api-contract.md) lists authentication, project, service, profile, lifecycle, and SSE routes.
 - [Storage contract](storage-contract.md) describes canonical paths, launch inputs, SQLite schema, and user data locations.
 - [Process contract](process-contract.md) defines runtime ownership, stop capabilities, readiness, restart, and reconciliation.

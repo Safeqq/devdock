@@ -11,12 +11,19 @@ All notable changes to DevDock will be documented in this file.
 - A single-instance lock per data directory, so the desktop app and CLI cannot manage the same services at once.
 - A development build of the Windows desktop shell (Tauri v2) that runs the daemon as a hidden sidecar, pairs its window automatically, grants the native folder dialog only to the daemon's exact origin, blocks navigation away from it, and stops the daemon when the app exits.
 - Desktop app lifecycle: the window hides to a tray icon with Open and Quit, a second launch shows the existing window, `--quit` stops a running instance, the window signs back in by itself when its session ends, and an error window with Try again and Close appears when the engine cannot start or stops unexpectedly.
+- A redesigned interface for first-time users, used by both the desktop app and the browser dashboard: a welcome screen, an "Add this project?" preview of `package.json` before anything is saved, one card per script with a plain-language description and status, a Quick start hint, optional Script settings, tabbed output with Copy and Clear, groups, a project menu, and a sidebar with running and failed counts and the Node.js version in use. It uses a paper-and-ink theme with bundled fonts (SIL Open Font License 1.1) that work offline.
+- API routes behind the new interface: `POST /api/folders/inspect` reads a folder without registering it, `POST /api/services/:id/settings` changes a script's optional settings, `GET /api/runtime/summary` counts running and failed scripts per project, and `GET /api/system` reports which Node.js runs projects. Script discovery now includes each script's command.
+- DevDock recognizes the loopback address an app prints, such as Vite's `Local: http://localhost:5173/`, and uses it for Ready and Open when no port or readiness check is configured. Terminal colour codes are removed from output.
+- The desktop app opens project addresses in the default browser and project folders in File Explorer, accepting only loopback addresses and existing folders.
 - Groups can be edited and deleted while they are stopped, and a script's settings and run history can be reset (or a card without a `package.json` script removed) while it is stopped and not part of a group.
 - A Check dialog for scripts whose status DevDock lost after it was closed abruptly: it shows whether the recorded process ID is in use and whether the port is busy, as hints only, and lets the user mark the run as stopped once it is gone. DevDock still never stops or adopts such a program itself.
 - The desktop tray lists how many scripts run per project, shows the count in its tooltip, and offers Stop all scripts without quitting.
 - Windows notifications from the desktop app when a script exits with an error, fails to launch, or misses its readiness deadline while the DevDock window is hidden or not focused.
 - A per-user Windows installer for the desktop app (`npm run desktop:bundle`), carrying the official Node.js 24.21.0 runtime and the DevDock package; install and uninstall ask a running DevDock to quit first, and uninstalling keeps the user's data. `npm run desktop:verify-installer` and a Windows CI job install it silently, run an npm script with it, and uninstall it.
 - `check:versions` and `release:version` now also cover the desktop crate's `Cargo.toml`, `Cargo.lock`, and `tauri.conf.json`.
+- The installer carries `LICENSE.txt` and `THIRD-PARTY-NOTICES.txt`, which cover the Rust crates in the desktop app, the npm packages in the engine, Node.js, and the fonts. `npm run desktop:bundle` also writes a `.sha256` file next to the installer.
+- An optional startup trace for the desktop app: when `DEVDOCK_SHELL_LOG` names a file, each startup step is appended to it.
+- [Install DevDock on Windows](docs/install-windows.md), a user guide covering the SmartScreen warning, updating, uninstalling, and startup problems.
 
 ### Changed
 

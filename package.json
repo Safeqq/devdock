@@ -67,7 +67,7 @@
     "desktop:build": "npm run build && cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml",
     "desktop:run": "npm run desktop:build && node scripts/run-desktop.mjs",
     "desktop:verify": "npm run desktop:build && node scripts/verify-desktop-shell.mjs apps/desktop/src-tauri/target/debug/devdock-desktop.exe",
-    "desktop:bundle": "npm run package:local && node scripts/stage-desktop-bundle.mjs && tauri build --config apps/desktop/src-tauri/tauri.bundle.conf.json",
+    "desktop:bundle": "npm run package:local && node scripts/stage-desktop-bundle.mjs && tauri build --config apps/desktop/src-tauri/tauri.bundle.conf.json && node scripts/write-installer-checksum.mjs",
     "desktop:verify-installer": "node scripts/verify-desktop-installer.mjs"
   },
   "dependencies": {

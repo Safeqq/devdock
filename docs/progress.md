@@ -1,6 +1,6 @@
 # DevDock Progress
 
-Fase/subfase aktif: 8 / 8.0–8.4 (sampai installer D4) verified lokal Windows, 8.3 menunggu review tampilan pengguna; D1a dan spike 8.1 lulus matriks tiga OS. Fase 0–7 dan rilis 0.1.0 (`v0.1.0` pada `3d5c631`) verified pada tiga OS.
+Fase/subfase aktif: 8 / 8.0–8.4 dan D5 tanpa rilis (sampai lisensi dan panduan installer) verified lokal Windows dan CI, 8.3 menunggu review tampilan pengguna; D1a dan spike 8.1 lulus matriks tiga OS. Fase 0–7 dan rilis 0.1.0 (`v0.1.0` pada `3d5c631`) verified pada tiga OS.
 Status fase 0: verified pada Windows native x64 dan matriks GitHub Windows 2025 x64, macOS 15 arm64, serta Ubuntu 24.04 x64
 Status fase 1: verified; supervisor, fixture tree, sentinel, dan adapter native lulus pada kombinasi platform yang sesuai
 Status fase 2: verified; registry, discovery, SQLite persistence, dan npm launch plan lulus pada ketiga keluarga OS
@@ -116,8 +116,14 @@ OS utama: Windows native, build 10.0.26200, x64
     - `scripts/verify-desktop-installer.mjs` adalah smoke test install/launch/uninstall.
   - **D4.3 (`92b0883`, `ee88343`, `8ad4ef1`, `c11244d`):**
     - Job CI `desktop-installer` di windows-2025 memasang Rust 1.95.0, menjalankan `desktop:bundle`, lalu menjalankan `desktop:verify-installer -- --engine-only`.
-    - Run pertama menunjukkan dua masalah. Pertama, test `release-readiness` gagal di ketiga OS karena fixture-nya belum menyalin `desktop-version-files.mjs`. Kedua, aplikasi terpasang di runner tidak pernah membuka jendela maupun engine.
+    - Run pertama menunjukkan dua masalah. Pertama, test `release-readiness` gagal di ketiga OS karena fixture-nya belum menyalin `desktop-version-files.mjs`. Kedua, port DevTools tidak terbuka di runner. Saat itu hal kedua sempat dikira aplikasi macet, karena filter proses memakai path 8.3.
     - Mode `--engine-only` menjalankan engine terpasang langsung dengan baris perintah shell. Mode jendela tetap menjadi bawaan lokal.
+- 8.5/D5 tanpa rilis (verified lokal dan CI). Pengguna meminta lanjut ke D5.
+  - **Penyelidikan CI (`bac5366`, `d430966`):**
+    - Trace startup opsional `DEVDOCK_SHELL_LOG` (`startup_log.rs`) membuktikan aplikasi terpasang berjalan normal di runner. Yang tidak terbuka hanya port DevTools.
+    - Skrip uji kini memakai nama panjang folder temp (`realpathSync.native`) dan mode baru `--shell-only`. CI menjalankannya bersama `--engine-only`.
+  - **Lisensi (`d430966`):** `scripts/desktop-notices.mjs` dengan test unit (5), teks standar SPDX v3.27.0 di `apps/desktop/licenses/`, serta `LICENSE.txt` dan `THIRD-PARTY-NOTICES.txt` sebagai resource installer. `maxBuffer` staging dinaikkan karena keluaran `cargo metadata` melebihi 1 MiB.
+  - **Dokumentasi:** `docs/install-windows.md`, bagian Install di README, `scripts/write-installer-checksum.mjs` di akhir `desktop:bundle`, dan entri CHANGELOG. Entri CHANGELOG juga menambahkan perubahan D3 yang sebelumnya terlewat.
 
 ## Verifikasi
 
@@ -207,6 +213,10 @@ OS utama: Windows native, build 10.0.26200, x64
   - **Test font:** browser test memastikan face Libre Caslon Display berstatus `loaded`. Mutation check dengan `font-src` dihapus membuat test gagal dengan status `error`.
   - **Shell desktop:** `npm run desktop:verify` lulus 21/21 setelah `cargo clean`.
   - **Tidak dicakup:** `npm audit` melaporkan satu temuan high pada `source-map-js` (dependensi build Vite, dev-only). Temuan itu sudah ada sebelum perubahan ini dan tidak ditangani di sini.
+- 2026-10-11, Windows native x64, D5:
+  - **Lokal:** unit 74/74, lint, dan `cargo fmt --check` lulus. Installer baru 30.412.754 byte lulus ketiga mode `desktop:verify-installer`: jendela 6/6, `--engine-only` 7/7, dan `--shell-only` 4/4.
+  - **CI:** [workflow `38069501359`](https://github.com/Safeqq/devdock/actions/runs/38069501359) pada `d430966` lulus untuk keempat job. Job installer lulus `--engine-only` 7/7 dan `--shell-only` 4/4 dengan installer CI 30.418.250 byte; di runner, jendela siap dalam 3,5 detik.
+  - **Trace diagnostik:** [workflow `38068590705`](https://github.com/Safeqq/devdock/actions/runs/38068590705) mencatat tray 15 ms, engine siap 584 ms, dan jendela utama 3,8 detik, sementara port DevTools tidak pernah terbuka.
 - 2026-10-10, Windows native x64, D4, Node 24.21.0/npm 11.19.0 dari `.tools/` dan Rust 1.95.0:
   - **Gate lokal:** `npm run verify:release` lulus penuh:
     - Lint 135 file, unit 69/69, integration 25 plus satu skip POSIX-only, dan browser 4/4.
@@ -385,10 +395,10 @@ OS utama: Windows native, build 10.0.26200, x64
 
 ## Blocker dan batas dukungan
 
-- Di runner GitHub windows-2025, aplikasi desktop terpasang berjalan dan menangani `--quit`, tetapi tidak membuka jendela maupun engine dalam 90 detik, tanpa stderr dan tanpa crash.
-  - Sesi runner interaktif (sesi 2) dan WebView2 153.0.4234.48 tersedia. Penyebabnya belum diselidiki.
-  - Karena itu CI hanya memverifikasi engine terpasang (`--engine-only`), sedangkan jendela dan hook uninstall diverifikasi lokal.
-  - Perlu diselidiki sebelum rilis, karena pengguna dengan lingkungan serupa akan melihat aplikasi yang diam saja.
+- Di runner GitHub windows-2025, port DevTools WebView2 (`--remote-debugging-port` lewat `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`) tidak terbuka, walaupun aplikasi terpasang berjalan normal dan menampilkan jendelanya.
+  - Karena itu penggerakan halaman aplikasi terpasang hanya diverifikasi lokal; CI memakai `--engine-only` dan `--shell-only`.
+  - Penyebab port tertutup tidak diselidiki lebih jauh.
+- Installer belum ditandatangani (SmartScreen memperingatkan), belum ada pembaruan otomatis, dan aplikasi desktop baru untuk Windows x64.
 - Instalasi Node/npm sistem (`24.11.1`/`11.6.2`) masih lebih lama; verifikasi memakai runtime portable yang dipin. Pengguna perlu memasang versi pin atau memakai runtime setara agar `npm ci` lulus dengan `engine-strict`.
 - `WindowsJobProcessAdapter` tetap tidak memiliki cooperative graceful stop; capability-nya sengaja `unsupported` dan shutdown memakai forced Job Object termination. Adapter POSIX hanya memiliki authority atas proses yang tetap berada dalam process group; project tepercaya dapat sengaja membuat session/group baru dan keluar dari containment. Rekonsiliasi daemon tetap konservatif: run aktif historis diblokir sebagai `unknown`; inspeksi metadata lintas restart, auto-adoption, dan recovery interaktif belum tersedia.
 - Matriks Phase 6 telah lulus pada ketiga runner, tetapi dukungan hanya diklaim untuk kombinasi OS/version/architecture dan toolchain yang dicatat. Probe hanya membuktikan endpoint loopback merespons, bukan identitas listener. Snapshot operasi profile, lease, pending timer, dan penghitung restart sengaja hanya berada di memori karena restart daemon menghilangkan bukti ownership. `node:sqlite` masih ditandai Release Candidate pada Node 24.21.0.
@@ -402,4 +412,4 @@ OS utama: Windows native, build 10.0.26200, x64
 ## Berikutnya
 
 - Review tampilan D3 dan D3.5 oleh pengguna (`npm run desktop:run` atau screenshot di `docs/screenshots/d3/`), termasuk melihat menu tray secara langsung, lalu perbaikan sesuai masukan.
-- D5: pemberitahuan lisensi pihak ketiga untuk crate Rust di installer, dokumentasi pengguna (cara install, peringatan SmartScreen, cara uninstall), lalu rilis 0.2.0 setelah konfirmasi pengguna.
+- Rilis 0.2.0 (8.5) setelah konfirmasi pengguna: `release:version 0.2.0`, gate lokal dan CI pada commit rilis, installer dan tarball dari commit itu, lalu tag dan GitHub Release.

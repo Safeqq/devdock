@@ -225,24 +225,37 @@ Keputusan:
 4. Menguninstal selagi aplikasi dan script masih berjalan.
 5. Memastikan aplikasi keluar dengan kode 0, script berhenti, file program hilang, dan data tetap ada.
 
-Job CI `Desktop installer (windows-2025)` memakai `--engine-only`. Di runner, aplikasi yang terpasang memang berjalan dan menangani `--quit`, tetapi dalam 90 detik tidak pernah membuka jendela maupun memulai engine. Tidak ada output stderr dan tidak crash.
+Job CI `Desktop installer (windows-2025)` tidak bisa memakai mode bawaan. Penyebabnya: port DevTools WebView2, yang dipakai skrip uji untuk mengendalikan halaman, tidak pernah terbuka di runner. Aplikasinya sendiri berjalan normal.
 
-Penyebabnya belum diketahui. Sesi runner interaktif (sesi 2, `UserInteractive` true) dan WebView2 153 tersedia, jadi dugaan awal "tanpa desktop" terbantahkan. Kemungkinan macetnya terjadi saat membuat ikon tray atau jendela, sebelum sidecar dijalankan.
+Ini terbukti di D5 lewat trace startup (`DEVDOCK_SHELL_LOG`): tray dibuat dalam 15 ms, engine siap dalam 0,6 detik, dan jendela "DevDock" dibuat dalam 3,8 detik. Dugaan awal "aplikasi macet" ternyata keliru, karena filter proses memakai nama pendek 8.3 (`RUNNER~1`) sehingga engine tidak terlihat.
 
-Karena itu CI menjalankan langkah berikut:
+CI kini menjalankan dua mode:
 
-1. Memasang installer secara senyap.
-2. Menjalankan engine terpasang dengan Node bawaan, memakai baris perintah yang sama dengan shell.
-3. Menjalankan script npm.
-4. Menghentikan engine lewat pipa kontrolnya.
-5. Memastikan `--quit` pada exe terpasang keluar dengan kode 0.
-6. Menguninstal dan memeriksa file serta data.
+- **`--engine-only`:**
+  1. Memasang installer secara senyap.
+  2. Menjalankan engine terpasang dengan Node bawaan dan baris perintah yang sama dengan shell.
+  3. Menjalankan script npm.
+  4. Menghentikan engine lewat pipa kontrolnya.
+  5. Memeriksa `--quit`.
+  6. Menguninstal dan memeriksa file serta data.
+- **`--shell-only`:** memulai aplikasi terpasang, menunggu trace melaporkan engine siap dan jendela dibuat, memeriksa jendela "DevDock" terlihat, lalu menguninstal selagi aplikasi berjalan. Aplikasi harus keluar dengan kode 0, engine berhenti, file hilang, dan data tetap ada.
 
-Bagian jendela dan hook uninstall saat aplikasi berjalan tetap diverifikasi lokal.
+Hanya penggerakan halaman lewat DevTools yang tetap diverifikasi lokal.
 
-Yang belum ada (masuk D5 atau nanti):
+## Hasil D5 (2026-10-11)
 
-- **Pemberitahuan lisensi pihak ketiga untuk crate Rust** di dalam installer belum dibuat. Node.js dan paket npm sudah membawa lisensinya; ini harus beres sebelum rilis 0.2.0.
+- **Lisensi:** installer membawa `LICENSE.txt` (MIT) dan `THIRD-PARTY-NOTICES.txt` (sekitar 546 KB), yang dibuat oleh `scripts/desktop-notices.mjs` saat staging. Isinya:
+  - 246 crate Rust yang ditaut ke shell untuk target Windows, yaitu dependensi normal; build dan dev dependency tidak ikut.
+  - Teks lisensi tiap crate dari file lisensinya sendiri. Enam crate yang diterbitkan tanpa file lisensi memakai teks standar SPDX v3.27.0 (`apps/desktop/licenses/`) dengan penulisnya, atau URL repositori bila penulis tidak tercatat.
+  - Teks yang identik ditulis sekali dengan daftar pemakainya.
+  - 77 paket npm engine, Node.js, font, serta NSIS dan nsis_tauri_utils.
+  - Crate MPL-2.0 diberi keterangan tempat sumbernya (crates.io).
+  - Staging gagal bila sebuah crate tidak punya file lisensi maupun lisensi standar.
+- **Checksum:** `desktop:bundle` menulis `DevDock_<versi>_x64-setup.exe.sha256`.
+- **Panduan pengguna:** `docs/install-windows.md` (bahasa Inggris, seperti UI) menjelaskan unduhan dan cek hash, peringatan SmartScreen, isi instalasi, pembaruan, uninstall (data tetap ada dan cara menghapusnya), serta cara merekam trace startup. README kini mengutamakan installer desktop.
+
+Yang masih belum ada:
+
 - **Penandatanganan kode:** installer belum ditandatangani, sehingga SmartScreen akan memperingatkan.
 - **Pembaruan otomatis** belum ada.
 

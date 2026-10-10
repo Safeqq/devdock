@@ -2,6 +2,13 @@
 
 DevDock is a local dashboard for developer projects and services. Register a trusted project, choose a service or profile, start it, inspect status and logs, open the app, and stop it from one loopback-only dashboard.
 
+## Install
+
+- **Windows:** install the desktop app with `DevDock_<version>_x64-setup.exe` from the [releases page](https://github.com/Safeqq/devdock/releases). It needs no administrator rights and brings its own Node.js for computers that have none. See [Install DevDock on Windows](docs/install-windows.md) for the SmartScreen warning, updating, and uninstalling.
+- **macOS, Linux, or a browser dashboard on Windows:** install the command-line package as described in [Local package](#local-package). Desktop apps for macOS and Linux are planned.
+
+The rest of this README is for working on DevDock itself.
+
 Phase 0 established project tooling, runtime contracts, and an HTTP fixture. Phase 1 added a serialized supervisor and native process-tree experiments. Phase 2 added a project registry, safe `package.json` script discovery, SQLite persistence, and an npm launch plan. Phase 3 added the authenticated loopback API and React/Vite dashboard. Phase 4 added diagnostics, readiness, and profiles. Phase 5 added bounded restart, reconciliation, directed shutdown, and reliability gates. Phase 6 added native Windows Job Object and POSIX process-group adapters, the same application contract suite on all three target OS families, and a self-contained local npm package. Phase 7 added profiling, non-secret configuration export, repeatable dashboard recording and clean-setup verification, plus evidence from two trusted real projects. The exact Windows 2025 x64, macOS 15 arm64, and Ubuntu 24.04 x64 matrix, including installed CLI, packed-content, SBOM, and license-inventory gates, passed on 2026-10-08 at commit `7ea89ea` in [workflow run 37820516272](https://github.com/Safeqq/devdock/actions/runs/37820516272).
 
 ## Setup

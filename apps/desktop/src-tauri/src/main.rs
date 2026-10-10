@@ -3,7 +3,7 @@
 
 mod sidecar;
 
-use sidecar::{RuntimeSummary, Sidecar, SidecarEvent};
+use sidecar::{Launch, RuntimeSummary, Sidecar, SidecarEvent};
 use tauri::ipc::CapabilityBuilder;
 use tauri::menu::{IsMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -260,7 +260,8 @@ fn open_dashboard(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             SidecarEvent::Alert { title, body } => notify_failure(&handle, &title, &body),
         });
     };
-    let (sidecar, ready) = Sidecar::start(on_event, move || {
+    let launch = Launch::resolve(app.path().resource_dir().ok().as_deref());
+    let (sidecar, ready) = Sidecar::start(launch, on_event, move || {
         let handle = exit_handle.clone();
         let _ = exit_handle.run_on_main_thread(move || {
             show_error(

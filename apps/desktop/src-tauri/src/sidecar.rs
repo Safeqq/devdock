@@ -7,7 +7,7 @@
 
 use std::error::Error;
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -48,21 +48,45 @@ pub struct Sidecar {
     stopping: Arc<AtomicBool>,
 }
 
-/// The Node.js that runs the daemon. Packaging (stage D4) will point this at a bundled runtime;
-/// during development it comes from `DEVDOCK_SIDECAR_NODE` or `node` on PATH.
-fn node_executable() -> PathBuf {
-    std::env::var_os("DEVDOCK_SIDECAR_NODE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("node"))
+/// The Node.js and script that run the daemon. An installed app carries both as resources:
+/// `runtime/node.exe` and the DevDock package under `engine/`. A development build without them
+/// uses `node` on PATH and the workspace build output next to this crate. `DEVDOCK_SIDECAR_NODE`
+/// and `DEVDOCK_SIDECAR_ENTRY` override either, for tests.
+pub struct Launch {
+    pub node: PathBuf,
+    pub entry: PathBuf,
 }
 
-/// The daemon entry point. Defaults to the workspace build output next to this crate.
-fn daemon_entry() -> PathBuf {
-    std::env::var_os("DEVDOCK_SIDECAR_ENTRY")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../daemon/dist/registry-api-cli.js")
-        })
+impl Launch {
+    pub fn resolve(resource_dir: Option<&Path>) -> Launch {
+        let bundled = resource_dir
+            .map(|dir| {
+                (
+                    dir.join("runtime").join("node.exe"),
+                    dir.join("engine")
+                        .join("node_modules")
+                        .join("devdock")
+                        .join("bin")
+                        .join("devdock.mjs"),
+                )
+            })
+            .filter(|(node, entry)| node.is_file() && entry.is_file());
+        let (default_node, default_entry) = bundled.unwrap_or_else(|| {
+            (
+                PathBuf::from("node"),
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../daemon/dist/registry-api-cli.js"),
+            )
+        });
+        Launch {
+            node: std::env::var_os("DEVDOCK_SIDECAR_NODE")
+                .map(PathBuf::from)
+                .unwrap_or(default_node),
+            entry: std::env::var_os("DEVDOCK_SIDECAR_ENTRY")
+                .map(PathBuf::from)
+                .unwrap_or(default_entry),
+        }
+    }
 }
 
 fn text_field(event: &serde_json::Value, name: &str) -> Option<String> {
@@ -92,12 +116,13 @@ impl Sidecar {
     /// for each report after readiness. `on_unexpected_exit` runs there too if the daemon's output
     /// ends without the shell having asked it to stop.
     pub fn start(
+        launch: Launch,
         on_event: impl Fn(SidecarEvent) + Send + 'static,
         on_unexpected_exit: impl FnOnce() + Send + 'static,
     ) -> Result<(Sidecar, Ready), Box<dyn Error>> {
-        let mut command = Command::new(node_executable());
+        let mut command = Command::new(launch.node);
         command
-            .arg(daemon_entry())
+            .arg(launch.entry)
             .env("DEVDOCK_CONTROL", "stdin")
             .env("DEVDOCK_PORT", "0")
             .stdin(Stdio::piped())

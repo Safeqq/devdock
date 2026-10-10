@@ -87,6 +87,7 @@ test("release readiness passes complete npm metadata and reports strict blockers
     await Promise.all(
       [
         "check-workspace-versions.mjs",
+        "desktop-version-files.mjs",
         "generate-license-inventory.mjs",
         "generate-sbom.mjs",
         "inspect-release-readiness.mjs",

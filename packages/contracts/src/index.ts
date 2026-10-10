@@ -474,6 +474,8 @@ export const SystemInfoResponseSchema = z.strictObject({
     source: z.enum(["path", "daemon"]),
     version: z.string().max(64).nullable(),
   }),
+  // False when this platform has no process adapter, so scripts can be configured but not run.
+  serviceControl: z.boolean(),
 });
 export type SystemInfo = z.infer<typeof SystemInfoResponseSchema>;
 

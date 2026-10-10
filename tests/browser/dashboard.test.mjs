@@ -127,7 +127,23 @@ before(
 );
 after(() => browser?.close());
 
-test("browser pairs and manages project configuration without executing a script", {
+async function pairBrowser(page, api) {
+  await page.getByRole("heading", { name: "Pair this browser" }).waitFor();
+  await page.getByLabel("Pairing code").fill(api.pairingCode);
+  await page.getByRole("button", { name: "Pair browser" }).click();
+}
+
+// Adds a project through the "Add a project" dialog the way a first-time user would.
+async function addProject(page, projectPath, name) {
+  await page.getByLabel("Project folder").fill(projectPath);
+  await page.getByRole("button", { name: "Look inside" }).click();
+  await page.getByRole("heading", { name: "Add this project?" }).waitFor();
+  await page.getByLabel("Name shown in DevDock").fill(name);
+  await page.getByRole("button", { name: "Add project" }).click();
+  await page.getByRole("heading", { name, level: 1 }).waitFor();
+}
+
+test("browser pairs, previews a folder, and manages settings without executing a script", {
   timeout: 35_000,
 }, async (t) => {
   t.diagnostic(`shared browser startup: ${browserStartupMs} ms`);
@@ -143,7 +159,10 @@ test("browser pairs and manages project configuration without executing a script
     await mkdir(projectPath);
     await writeFile(
       join(projectPath, "package.json"),
-      JSON.stringify({ name: "browser-fixture", scripts: { dev: "node marker.mjs" } }),
+      JSON.stringify({
+        name: "browser-fixture",
+        scripts: { dev: "node marker.mjs", build: "node marker.mjs --build" },
+      }),
     );
     await writeFile(
       join(projectPath, "marker.mjs"),
@@ -171,50 +190,64 @@ test("browser pairs and manages project configuration without executing a script
     step("browser context");
 
     await page.goto(origin);
-    await page.getByRole("heading", { name: "Pair this browser" }).waitFor();
     assert.equal((await fetch(`${origin}/api/projects`)).status, 401);
-    await page.getByLabel("Pairing code").fill(api.pairingCode);
-    await page.getByRole("button", { name: "Pair browser" }).click();
-    await page.getByRole("heading", { name: "Projects" }).waitFor();
+    await pairBrowser(page, api);
+    await page.getByRole("heading", { name: "Welcome to DevDock" }).waitFor();
     step("pair");
-    await page.getByLabel("Folder path").fill(projectPath);
-    await page.getByLabel("Display name (optional)").fill("Browser Fixture");
+
+    await page.getByRole("button", { name: "Choose a project folder" }).click();
+    await page.getByLabel("Project folder").fill(join(tempRoot, "missing"));
+    await page.getByRole("button", { name: "Look inside" }).click();
+    await page.getByRole("alert").getByText("does not exist", { exact: false }).waitFor();
+    await page.getByLabel("Project folder").fill(projectPath);
+    await page.getByRole("button", { name: "Look inside" }).click();
+    const found = page.getByRole("list", { name: "Scripts found" });
+    await found.getByText("Development server").waitFor();
+    await found.getByText("Builds your app for release").waitFor();
+    await page.getByText("Nothing runs until you press Start").waitFor();
+    await page.getByLabel("Name shown in DevDock").fill("Browser Fixture");
     await page.getByRole("button", { name: "Add project" }).click();
-    await page.getByRole("heading", { name: "Browser Fixture" }).waitFor();
+    await page.getByRole("heading", { name: "Browser Fixture", level: 1 }).waitFor();
+    await page.getByText("Running scripts isn't available on this system").waitFor();
+    const devCard = page.getByRole("article", { name: "dev script" });
+    await devCard.getByText("Development server · keeps running").waitFor();
+    await devCard.getByText("node marker.mjs", { exact: true }).waitFor();
     step("register project");
-    await page.getByLabel("App port (optional)").fill("4300");
-    await page.getByLabel("Environment files (optional)").fill(".env.browser");
-    await page.getByLabel("Required environment keys (optional)").fill("BROWSER_TOKEN");
-    await page.getByLabel("Automatic restart").selectOption("on_failure");
-    await page.getByLabel("Maximum attempts").fill("2");
-    await page.getByLabel("Initial backoff (ms)").fill("250");
-    await page.getByLabel("Maximum backoff (ms)").fill("1000");
-    await page.getByRole("button", { name: "Add service" }).click();
-    await page.getByRole("heading", { name: "dev" }).waitFor();
-    step("add service");
-    const profileForm = page.locator("form.profile-form");
-    await profileForm.getByLabel("Profile name").fill("Backend Only");
-    await profileForm.getByLabel("dev", { exact: true }).check();
-    await profileForm.getByRole("button", { name: "Create profile" }).click();
-    const profileCard = page.locator("article.profile-card").filter({ hasText: "Backend Only" });
-    await profileCard.getByRole("heading", { name: "Backend Only" }).waitFor();
-    await profileCard.locator(".state-pill").getByText("Idle", { exact: true }).waitFor();
-    step("create profile");
-    const serviceCard = page.locator("article.service-card").filter({ hasText: "npm run dev" });
-    await serviceCard.getByText("restart up to 2 times", { exact: false }).waitFor();
-    await serviceCard.getByRole("button", { name: "Run dev diagnostics" }).click();
-    const diagnostics = serviceCard.getByRole("region", { name: "dev diagnostics" });
-    await diagnostics.getByRole("list", { name: "Required environment keys" }).waitFor();
-    await diagnostics.getByText("BROWSER_TOKEN", { exact: true }).waitFor();
-    await diagnostics.getByText("Present", { exact: true }).waitFor();
-    assert.equal(
-      (await diagnostics.textContent()).includes("browser-secret-must-not-render"),
-      false,
-    );
+
+    await devCard.getByRole("button", { name: "Settings for dev" }).click();
+    const settings = page.getByRole("dialog", { name: "dev" });
+    await settings.getByLabel("Port", { exact: true }).fill("4300");
+    await settings.getByLabel("Files to load").fill(".env.browser");
+    await settings.getByLabel("Variables it needs").fill("BROWSER_TOKEN");
+    await settings.getByLabel("Restart attempts").fill("2");
+    await settings.getByText("Restart it, up to").click();
+    await settings.getByRole("button", { name: "Save" }).click();
+    await page.getByText("Saved settings for dev.").waitFor();
+    step("save settings");
+
+    await devCard.getByRole("button", { name: "Settings for dev" }).click();
+    assert.equal(await settings.getByLabel("Port", { exact: true }).inputValue(), "4300");
+    await settings.getByRole("button", { name: "Check port and environment" }).click();
+    const checks = settings.getByRole("list", { name: "Check results" });
+    await checks.getByText("BROWSER_TOKEN", { exact: true }).waitFor();
+    await checks.getByText("Present", { exact: true }).waitFor();
+    assert.equal((await settings.textContent()).includes("browser-secret-must-not-render"), false);
+    await settings.getByRole("button", { name: "Close" }).click();
     step("diagnostics");
+
+    await page.getByRole("button", { name: "New group" }).click();
+    const groupDialog = page.getByRole("dialog", { name: "New group" });
+    await groupDialog.getByLabel("Group name").fill("Backend Only");
+    await groupDialog.locator("label.pick").filter({ hasText: "dev" }).locator("input").check();
+    await groupDialog.getByRole("button", { name: "Create group" }).click();
+    const groupCard = page.getByRole("article", { name: "Backend Only group" });
+    await groupCard.getByText("Not running", { exact: true }).waitFor();
+    step("create group");
+
+    await page.getByRole("button", { name: "Project options" }).click();
     const [download] = await Promise.all([
       page.waitForEvent("download"),
-      page.getByRole("link", { name: "Export configuration" }).click(),
+      page.getByRole("menuitem", { name: "Export settings" }).click(),
     ]);
     assert.equal(download.suggestedFilename(), "devdock-configuration.json");
     const downloadedPath = await download.path();
@@ -224,31 +257,37 @@ test("browser pairs and manages project configuration without executing a script
     assert.equal(exportedText.includes(projectPath), false);
     const exported = JSON.parse(exportedText);
     assert.equal(exported.format, "devdock.project-configuration");
+    assert.equal(exported.services[0].scriptName, "dev");
+    assert.equal(exported.services[0].expectedPort, 4300);
     assert.deepEqual(exported.services[0].envFiles, [".env.browser"]);
     assert.deepEqual(exported.services[0].requiredEnvKeys, ["BROWSER_TOKEN"]);
+    assert.deepEqual(exported.services[0].restartPolicy, {
+      kind: "on_failure",
+      maxAttempts: 2,
+      initialBackoffMs: 1000,
+      maxBackoffMs: 10000,
+    });
     assert.deepEqual(exported.profiles[0].services, [{ serviceRef: "service-1", dependsOn: [] }]);
     step("export");
-    await page.getByRole("button", { name: "View command" }).click();
-    await page.locator(".preview pre").getByText(/"cwd"/u).waitFor();
-    await page.getByRole("button", { name: "Prepare Open App" }).click();
-    const openApp = page.getByRole("link", { name: /Open App/u });
-    await openApp.waitFor();
-    assert.equal(await openApp.getAttribute("href"), "http://127.0.0.1:4300/");
-    step("preview and open app");
     await assert.rejects(access(markerPath));
 
     await page.reload();
-    await page.getByRole("heading", { name: "Browser Fixture" }).waitFor();
+    await page.getByRole("heading", { name: "Browser Fixture", level: 1 }).waitFor();
     const unpairedContext = await browser.newContext();
     contexts.push(unpairedContext);
     const unpairedPage = await unpairedContext.newPage();
     await unpairedPage.goto(origin);
     await unpairedPage.getByRole("heading", { name: "Pair this browser" }).waitFor();
     step("reload and unpaired context");
-    await page.getByRole("button", { name: "Archive" }).click();
-    await page.getByText("No projects yet.").waitFor();
-    step("archive");
+
+    await page.getByRole("button", { name: "Project options" }).click();
+    await page.getByRole("menuitem", { name: "Remove from DevDock" }).click();
+    await page.getByText("Your files stay exactly where they are.").waitFor();
+    await page.getByRole("button", { name: "Remove", exact: true }).click();
+    await page.getByRole("heading", { name: "Welcome to DevDock" }).waitFor();
+    step("remove");
     await access(join(projectPath, "package.json"));
+    await assert.rejects(access(markerPath));
     assert.deepEqual(pageErrors, []);
   } finally {
     await Promise.all(contexts.map((context) => context.close()));
@@ -286,13 +325,13 @@ test("desktop shell pairing code signs the window in without the pairing form", 
     const pageErrors = [];
     page.on("pageerror", (error) => pageErrors.push(error.message));
     await page.goto(origin);
-    await page.getByRole("heading", { name: "Projects" }).waitFor();
+    await page.getByRole("heading", { name: "Welcome to DevDock" }).waitFor();
     assert.equal(await page.getByLabel("Pairing code").count(), 0);
     assert.equal(await page.evaluate(() => window.__DEVDOCK_DESKTOP__?.pairingCode), undefined);
     // The init script injects the used code again on reload; the session cookie keeps the
     // window signed in and the stale code is never submitted.
     await page.reload();
-    await page.getByRole("heading", { name: "Projects" }).waitFor();
+    await page.getByRole("heading", { name: "Welcome to DevDock" }).waitFor();
 
     const rejected = await browser.newContext();
     contexts.push(rejected);
@@ -310,7 +349,7 @@ test("desktop shell pairing code signs the window in without the pairing form", 
   }
 });
 
-test("browser starts, follows logs, survives tab close, and stops an npm service", {
+test("browser starts, follows output, survives tab close, and stops an npm script", {
   skip: !productionProcessControlAvailable()
     ? "No production process adapter for this platform"
     : false,
@@ -330,13 +369,18 @@ test("browser starts, follows logs, survives tab close, and stops an npm service
       JSON.stringify({
         name: "browser-lifecycle-fixture",
         private: true,
-        scripts: { serve: "node server.mjs" },
+        scripts: { serve: "node server.mjs", check: "node check.mjs" },
       }),
       "utf8",
     );
     await writeFile(
       join(projectPath, "server.mjs"),
       `await import(${JSON.stringify(pathToFileURL(httpFixture).href)});\nawait new Promise((resolve) => setTimeout(resolve, 250));\nfor (let index = 1; index <= 650; index += 1) {\n  console.log(\`flood-\${index}\`);\n  if (index % 20 === 0) await new Promise((resolve) => setTimeout(resolve, 0));\n}\nconsole.log(JSON.stringify({ type: "browser-log-ready", port: ${expectedPort} }));\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(projectPath, "check.mjs"),
+      "console.error('1 check failed'); process.exitCode = 3;\n",
       "utf8",
     );
     await writeFile(join(projectPath, ".env.lifecycle"), `PORT=${expectedPort}\n`, "utf8");
@@ -359,42 +403,47 @@ test("browser starts, follows logs, survives tab close, and stops an npm service
     const origin = await api.listen(0);
     const context = await browser.newContext();
     contexts.push(context);
+    context.setDefaultTimeout(15_000);
     const pageErrors = [];
     let page = await context.newPage();
     page.on("pageerror", (error) => pageErrors.push(error.message));
 
     await page.goto(origin);
-    await page.getByLabel("Pairing code").fill(api.pairingCode);
-    await page.getByRole("button", { name: "Pair browser" }).click();
-    await page.getByRole("heading", { name: "Projects" }).waitFor();
-    await page.getByLabel("Folder path").fill(projectPath);
-    await page.getByLabel("Display name (optional)").fill("Runtime Browser Fixture");
-    await page.getByRole("button", { name: "Add project" }).click();
-    await page.getByRole("heading", { name: "Runtime Browser Fixture" }).waitFor();
-    await page.getByLabel("App port (optional)").fill(String(expectedPort));
-    await page.getByLabel("Readiness probe").selectOption("http");
-    await page.getByLabel("Readiness timeout (ms)").fill("5000");
-    await page.getByLabel("HTTP readiness path").fill("/ready");
-    await page.getByLabel("Environment files (optional)").fill(".env.lifecycle");
-    await page.getByRole("button", { name: "Add service" }).click();
+    await pairBrowser(page, api);
+    await page.getByRole("button", { name: "Choose a project folder" }).click();
+    await addProject(page, projectPath, "Runtime Browser Fixture");
+    await page.getByText("Quick start:").waitFor();
 
-    let serviceCard = page.locator("article.service-card").filter({ hasText: "npm run serve" });
-    await serviceCard.getByRole("heading", { name: "serve", exact: true }).waitFor();
-    await serviceCard.getByRole("button", { name: "Start serve" }).click();
-    await serviceCard.locator(".status-chip").getByText("Running", { exact: true }).waitFor();
-    await serviceCard.locator(".runtime-facts").getByText("Ready", { exact: true }).waitFor();
-    const readyLine = serviceCard
-      .getByRole("list", { name: "serve logs" })
-      .locator("code")
-      .filter({ hasText: '"type":"browser-log-ready"' });
+    let serveCard = page.getByRole("article", { name: "serve script" });
+    await serveCard.getByText("Recommended", { exact: true }).waitFor();
+    await serveCard.getByRole("button", { name: "Settings for serve" }).click();
+    const settings = page.getByRole("dialog", { name: "serve" });
+    await settings.getByLabel("Port", { exact: true }).fill(String(expectedPort));
+    await settings.getByText("When this page loads:").click();
+    await settings.getByLabel("Page that shows it is ready").fill("/ready");
+    await settings.getByLabel("Seconds to wait before giving up").fill("5");
+    await settings.getByLabel("Files to load").fill(".env.lifecycle");
+    await settings.getByRole("button", { name: "Save" }).click();
+    await page.getByText("Saved settings for serve.").waitFor();
+
+    await serveCard.getByRole("button", { name: "Start serve" }).click();
+    await serveCard.getByText("Running · Ready", { exact: true }).waitFor({ timeout: 20_000 });
+    assert.equal(await page.getByText("Quick start:").count(), 0);
+    const openLink = serveCard.getByRole("link", { name: "Open serve in your browser" });
+    assert.equal(await openLink.getAttribute("href"), `http://127.0.0.1:${expectedPort}/`);
+    const output = page.getByRole("list", { name: "serve output" });
+    const readyLine = output.getByText(/"type":"browser-log-ready"/u);
     // A slow runner can require several bounded SSE reconnects while replaying the burst.
     await readyLine.waitFor({ timeout: 30_000 });
-    const ready = JSON.parse(await readyLine.last().textContent());
-    await serviceCard.locator(".log-lines li").nth(499).waitFor();
-    assert.equal(await serviceCard.locator(".log-lines li").count(), 500);
+    await output.getByText("flood-1", { exact: true }).waitFor();
+    const ready = JSON.parse(await readyLine.textContent());
     assert.equal(ready.port, expectedPort);
     const serviceUrl = `http://127.0.0.1:${expectedPort}/ready`;
     assert.equal((await fetch(serviceUrl)).status, 200);
+    await page
+      .getByRole("navigation")
+      .getByText("1 running", { exact: true })
+      .waitFor({ timeout: 10_000 });
 
     await page.close();
     assert.equal((await fetch(serviceUrl)).status, 200);
@@ -402,35 +451,40 @@ test("browser starts, follows logs, survives tab close, and stops an npm service
     page = await context.newPage();
     page.on("pageerror", (error) => pageErrors.push(error.message));
     await page.goto(origin);
-    await page.getByRole("heading", { name: "Runtime Browser Fixture" }).waitFor();
-    serviceCard = page.locator("article.service-card").filter({ hasText: "npm run serve" });
-    await serviceCard.locator(".status-chip").getByText("Running", { exact: true }).waitFor();
-    await serviceCard.getByRole("button", { name: "View runtime" }).click();
-    await serviceCard
-      .getByRole("list", { name: "serve logs" })
+    await page.getByRole("heading", { name: "Runtime Browser Fixture", level: 1 }).waitFor();
+    serveCard = page.getByRole("article", { name: "serve script" });
+    await serveCard.getByText("Running · Ready", { exact: true }).waitFor();
+    await page
+      .getByRole("list", { name: "serve output" })
       .getByText(/"type":"browser-log-ready"/u)
-      .waitFor();
-    await serviceCard.getByRole("button", { name: "Stop serve" }).click();
-    await serviceCard.locator(".status-chip").getByText("Stopped", { exact: true }).waitFor();
+      .waitFor({ timeout: 30_000 });
+    await serveCard.getByRole("button", { name: "Stop serve" }).click();
+    await serveCard.getByText("Not running", { exact: true }).waitFor();
+    await page.getByText("Stopped.", { exact: true }).waitFor();
     await waitForEndpointToClose(serviceUrl);
 
-    const profileForm = page.locator("form.profile-form");
-    await profileForm.getByLabel("Profile name").fill("Backend Only");
-    await profileForm.getByLabel("serve", { exact: true }).check();
-    await profileForm.getByRole("button", { name: "Create profile" }).click();
-    const profileCard = page.locator("article.profile-card").filter({ hasText: "Backend Only" });
-    await profileCard.getByRole("button", { name: "Start profile" }).click();
-    await profileCard.locator(".state-pill").getByText("Ready", { exact: true }).waitFor({
-      timeout: 10_000,
-    });
+    const checkCard = page.getByRole("article", { name: "check script" });
+    await checkCard.getByRole("button", { name: "Run check" }).click();
+    await checkCard.getByText(/^Failed ·/u).waitFor();
+    await checkCard.getByText("Stopped with an error (exit code 3).", { exact: false }).waitFor();
+    await page.getByRole("list", { name: "check output" }).getByText("1 check failed").waitFor();
+
+    await page.getByRole("button", { name: "New group" }).click();
+    const groupDialog = page.getByRole("dialog", { name: "New group" });
+    await groupDialog.getByLabel("Group name").fill("Backend Only");
+    await groupDialog.locator("label.pick").filter({ hasText: "serve" }).locator("input").check();
+    await groupDialog.getByRole("button", { name: "Create group" }).click();
+    const groupCard = page.getByRole("article", { name: "Backend Only group" });
+    await groupCard.getByRole("button", { name: "Start group: Backend Only" }).click();
+    await groupCard.getByText("Running · Ready", { exact: true }).waitFor({ timeout: 20_000 });
     assert.equal((await fetch(serviceUrl)).status, 200);
-    await profileCard.getByRole("button", { name: "Stop profile" }).click();
-    await profileCard.locator(".state-pill").getByText("Stopped", { exact: true }).waitFor();
+    await groupCard.getByRole("button", { name: "Stop group: Backend Only" }).click();
+    await groupCard.getByText("Not running", { exact: true }).waitFor();
     await waitForEndpointToClose(serviceUrl);
 
     const project = registry.listProjects()[0];
     assert.ok(project);
-    const service = registry.listServices(project.id)[0];
+    const service = registry.listServices(project.id).find((entry) => entry.scriptName === "serve");
     assert.ok(service);
     assert.equal(store.listRuns(service.id).at(-1).processState, "stopped");
     assert.deepEqual(pageErrors, []);

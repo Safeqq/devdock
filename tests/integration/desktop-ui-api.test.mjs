@@ -186,9 +186,10 @@ test("folder inspection, script commands, and settings updates never run a scrip
     assert.equal((await call(origin, "/api/system")).status, 401);
     const system = await call(origin, "/api/system", { headers: { cookie } });
     assert.equal(system.status, 200);
-    const { projectNode } = await system.json();
+    const { projectNode, serviceControl } = await system.json();
     assert.equal(projectNode.source, "daemon");
     assert.equal(projectNode.version, process.version);
+    assert.equal(serviceControl, false);
 
     await assert.rejects(access(markerPath));
   } finally {

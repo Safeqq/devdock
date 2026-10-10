@@ -88,7 +88,10 @@ export function registerProjectRoutes(
 
   app.get("/api/system", async () => {
     systemInfo ??= nodeVersion(launcher).then((version) =>
-      SystemInfoResponseSchema.parse({ projectNode: { source: launcher.nodeSource, version } }),
+      SystemInfoResponseSchema.parse({
+        projectNode: { source: launcher.nodeSource, version },
+        serviceControl: runtime !== undefined,
+      }),
     );
     return systemInfo;
   });

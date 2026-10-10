@@ -15,9 +15,12 @@ All notable changes to DevDock will be documented in this file.
 - A Check dialog for scripts whose status DevDock lost after it was closed abruptly: it shows whether the recorded process ID is in use and whether the port is busy, as hints only, and lets the user mark the run as stopped once it is gone. DevDock still never stops or adopts such a program itself.
 - The desktop tray lists how many scripts run per project, shows the count in its tooltip, and offers Stop all scripts without quitting.
 - Windows notifications from the desktop app when a script exits with an error, fails to launch, or misses its readiness deadline while the DevDock window is hidden or not focused.
+- A per-user Windows installer for the desktop app (`npm run desktop:bundle`), carrying the official Node.js 24.21.0 runtime and the DevDock package; install and uninstall ask a running DevDock to quit first, and uninstalling keeps the user's data. `npm run desktop:verify-installer` and a Windows CI job install it silently, run an npm script with it, and uninstall it.
+- `check:versions` and `release:version` now also cover the desktop crate's `Cargo.toml`, `Cargo.lock`, and `tauri.conf.json`.
 
 ### Changed
 
+- The desktop app icon now matches the paper-and-ink logo in the app.
 - Projects now run with the first Node.js and npm found on the user's `PATH`, falling back to the Node.js running DevDock; the ready event reports which one is used.
 
 ## 0.1.0 - 2026-10-09

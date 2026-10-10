@@ -1,6 +1,6 @@
 # DevDock Progress
 
-Fase/subfase aktif: 8 / 8.0–8.3 (sampai UX desktop D3 dan D3.5) verified lokal Windows, 8.3 menunggu review tampilan pengguna; D1a dan spike 8.1 lulus matriks tiga OS. Fase 0–7 dan rilis 0.1.0 (`v0.1.0` pada `3d5c631`) verified pada tiga OS.
+Fase/subfase aktif: 8 / 8.0–8.4 (sampai installer D4) verified lokal Windows, 8.3 menunggu review tampilan pengguna; D1a dan spike 8.1 lulus matriks tiga OS. Fase 0–7 dan rilis 0.1.0 (`v0.1.0` pada `3d5c631`) verified pada tiga OS.
 Status fase 0: verified pada Windows native x64 dan matriks GitHub Windows 2025 x64, macOS 15 arm64, serta Ubuntu 24.04 x64
 Status fase 1: verified; supervisor, fixture tree, sentinel, dan adapter native lulus pada kombinasi platform yang sesuai
 Status fase 2: verified; registry, discovery, SQLite persistence, dan npm launch plan lulus pada ketiga keluarga OS
@@ -106,6 +106,18 @@ OS utama: Windows native, build 10.0.26200, x64
   - **UI:** `GroupDialog` (pengganti `NewGroupDialog`) untuk membuat, mengedit, dan menghapus grup; tombol gear pada kartu grup; bagian Start over/Remove this card di Script settings; tombol **Check** dan `LeftoverDialog` untuk status unknown. Teks alasan status unknown kini membedakan restart daemon dan stop yang belum terkonfirmasi.
   - **Shell:** menu tray dibangun ulang dari `runtime-summary` di main thread; **Stop all scripts** memanggil `Sidecar::stop_all`; `tauri-plugin-notification` 2.5.1 menampilkan `script-alert` hanya bila jendela tidak sedang dilihat.
   - **Screenshot:** `docs/screenshots/d3/capture.mjs` kini juga membuat `group-edit.png` dan `leftover.png`.
+- 8.4/D4 installer Windows (implemented dan verified lokal; lihat "Hasil D4" di `docs/desktop-plan.md`). Pengguna meminta lanjut ke tahap berikutnya setelah D3.5.
+  - **D4.1 (`078ed54`):** `scripts/desktop-version-files.mjs` membaca dan mengubah versi di `Cargo.toml`, entri `devdock-desktop` di `Cargo.lock`, dan `tauri.conf.json` sebagai teks. `check:versions` dan `release:version` memakainya, dan test unit baru memastikan format lain tidak berubah serta drift terdeteksi. Ikon final digambar ulang oleh `make-icon.mjs` lalu dibuat dengan `tauri icon`; ikon Store/Android/iOS yang ikut dibuat dibuang.
+  - **D4.2 (`860d50b`):**
+    - `scripts/stage-desktop-bundle.mjs` menyiapkan `bundle-input/runtime` (distribusi Node 24.21.0 dari cache `.tools/` atau nodejs.org, SHA-256 dipin) dan `bundle-input/engine` (tarball `package:local` dipasang `--offline`).
+    - `tauri.bundle.conf.json` menambahkan resource hanya untuk `tauri build`.
+    - `Launch::resolve` di `sidecar.rs` memilih runtime/engine bawaan bila ada.
+    - `tauri.conf.json` mengatur NSIS per-user, halaman lisensi MIT, hook, dan metadata publisher.
+    - `scripts/verify-desktop-installer.mjs` adalah smoke test install/launch/uninstall.
+  - **D4.3 (`92b0883`, `ee88343`, `8ad4ef1`, `c11244d`):**
+    - Job CI `desktop-installer` di windows-2025 memasang Rust 1.95.0, menjalankan `desktop:bundle`, lalu menjalankan `desktop:verify-installer -- --engine-only`.
+    - Run pertama menunjukkan dua masalah. Pertama, test `release-readiness` gagal di ketiga OS karena fixture-nya belum menyalin `desktop-version-files.mjs`. Kedua, aplikasi terpasang di runner tidak pernah membuka jendela maupun engine.
+    - Mode `--engine-only` menjalankan engine terpasang langsung dengan baris perintah shell. Mode jendela tetap menjadi bawaan lokal.
 
 ## Verifikasi
 
@@ -195,6 +207,21 @@ OS utama: Windows native, build 10.0.26200, x64
   - **Test font:** browser test memastikan face Libre Caslon Display berstatus `loaded`. Mutation check dengan `font-src` dihapus membuat test gagal dengan status `error`.
   - **Shell desktop:** `npm run desktop:verify` lulus 21/21 setelah `cargo clean`.
   - **Tidak dicakup:** `npm audit` melaporkan satu temuan high pada `source-map-js` (dependensi build Vite, dev-only). Temuan itu sudah ada sebelum perubahan ini dan tidak ditangani di sini.
+- 2026-10-10, Windows native x64, D4, Node 24.21.0/npm 11.19.0 dari `.tools/` dan Rust 1.95.0:
+  - **Gate lokal:** `npm run verify:release` lulus penuh:
+    - Lint 135 file, unit 69/69, integration 25 plus satu skip POSIX-only, dan browser 4/4.
+    - Clean setup 212 file (install 3,05 detik, build 6,44 detik).
+    - Tarball 4.777.794 byte/3.457 entry, SHA-256 `48055b43…`. SBOM `4deca489…` dan lisensi `6cc4ba1b…` tidak berubah.
+  - **Shell dan installer lokal:**
+    - `npm run desktop:verify` lulus 21/21 setelah `Launch::resolve`.
+    - `npm run desktop:bundle` menghasilkan installer 30.394.562 byte (29,0 MiB); staging berisi 5.467 file (runtime 107 MB, engine 29 MB).
+    - `npm run desktop:verify-installer` lulus 6/6 dalam mode jendela, termasuk uninstall selagi aplikasi dan script berjalan. Mode `--engine-only` lulus 7/7.
+  - **CI:** [workflow `38052286967`](https://github.com/Safeqq/devdock/actions/runs/38052286967) pada `c11244d` lulus untuk keempat job.
+    - Platform contract lulus di Windows, macOS, dan Ubuntu.
+    - Desktop installer lulus 7/7 `--engine-only` dengan installer CI 30.381.014 byte, selesai dalam 9 menit 31 detik termasuk build release Rust dari nol.
+  - **Insiden:** run pertama verifikasi installer memberi `/D=` yang dikutip Node. NSIS mengabaikannya dan memasang ke `%LOCALAPPDATA%DevDock` milik pengguna, berdampingan dengan `registry.sqlite`.
+    - Data dicadangkan, uninstaller dijalankan, lalu SHA-256 `registry.sqlite` dibandingkan: sama sebelum dan sesudah. Entri uninstall dan shortcut juga hilang.
+    - Skrip kini memakai `Start-Process`, menolak berjalan bila DevDock terpasang, dan gagal bila folder bawaan terisi.
 - 2026-10-10, Windows native x64, D3.5, Node 24.21.0/npm 11.19.0 portable (diunduh ulang dari nodejs.org, SHA-256 cocok dengan `SHASUMS256.txt`):
   - **Gate:** `npm run verify:release` lulus penuh:
     - Toolchain, versi workspace, typecheck, dan lint 132 file.
@@ -358,6 +385,10 @@ OS utama: Windows native, build 10.0.26200, x64
 
 ## Blocker dan batas dukungan
 
+- Di runner GitHub windows-2025, aplikasi desktop terpasang berjalan dan menangani `--quit`, tetapi tidak membuka jendela maupun engine dalam 90 detik, tanpa stderr dan tanpa crash.
+  - Sesi runner interaktif (sesi 2) dan WebView2 153.0.4234.48 tersedia. Penyebabnya belum diselidiki.
+  - Karena itu CI hanya memverifikasi engine terpasang (`--engine-only`), sedangkan jendela dan hook uninstall diverifikasi lokal.
+  - Perlu diselidiki sebelum rilis, karena pengguna dengan lingkungan serupa akan melihat aplikasi yang diam saja.
 - Instalasi Node/npm sistem (`24.11.1`/`11.6.2`) masih lebih lama; verifikasi memakai runtime portable yang dipin. Pengguna perlu memasang versi pin atau memakai runtime setara agar `npm ci` lulus dengan `engine-strict`.
 - `WindowsJobProcessAdapter` tetap tidak memiliki cooperative graceful stop; capability-nya sengaja `unsupported` dan shutdown memakai forced Job Object termination. Adapter POSIX hanya memiliki authority atas proses yang tetap berada dalam process group; project tepercaya dapat sengaja membuat session/group baru dan keluar dari containment. Rekonsiliasi daemon tetap konservatif: run aktif historis diblokir sebagai `unknown`; inspeksi metadata lintas restart, auto-adoption, dan recovery interaktif belum tersedia.
 - Matriks Phase 6 telah lulus pada ketiga runner, tetapi dukungan hanya diklaim untuk kombinasi OS/version/architecture dan toolchain yang dicatat. Probe hanya membuktikan endpoint loopback merespons, bukan identitas listener. Snapshot operasi profile, lease, pending timer, dan penghitung restart sengaja hanya berada di memori karena restart daemon menghilangkan bukti ownership. `node:sqlite` masih ditandai Release Candidate pada Node 24.21.0.
@@ -371,4 +402,4 @@ OS utama: Windows native, build 10.0.26200, x64
 ## Berikutnya
 
 - Review tampilan D3 dan D3.5 oleh pengguna (`npm run desktop:run` atau screenshot di `docs/screenshots/d3/`), termasuk melihat menu tray secara langsung, lalu perbaikan sesuai masukan.
-- D4 packaging: Node dan daemon dibundel, installer NSIS per-user, sinkronisasi versi `Cargo.toml`/`tauri.conf.json`, ikon final, dan workflow CI Windows yang menginstal, meluncurkan, serta menguninstal.
+- D5: pemberitahuan lisensi pihak ketiga untuk crate Rust di installer, dokumentasi pengguna (cara install, peringatan SmartScreen, cara uninstall), lalu rilis 0.2.0 setelah konfirmasi pengguna.

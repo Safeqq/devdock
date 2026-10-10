@@ -114,14 +114,18 @@ Inspect remaining decisions with `npm run release:inspect -- --target local`, re
 
 ## Desktop app (in development)
 
-DevDock is becoming a Windows desktop app built with Tauri v2: the window runs the dashboard, starts the daemon as a hidden sidecar, and pairs automatically, so no browser, URL, or pairing code is involved. Closing the window keeps DevDock and its services running in the tray; **Quit DevDock** in the tray menu stops them. Opening DevDock again shows the existing window, and `devdock-desktop.exe --quit` stops a running instance. It is a development build for now; an installer is planned (see [docs/desktop-plan.md](docs/desktop-plan.md)).
+DevDock is becoming a Windows desktop app built with Tauri v2: the window runs the dashboard, starts the daemon as a hidden sidecar, and pairs automatically, so no browser, URL, or pairing code is involved. Closing the window keeps DevDock and its services running in the tray; **Quit DevDock** in the tray menu stops them. Opening DevDock again shows the existing window, and `devdock-desktop.exe --quit` stops a running instance. A per-user Windows installer can be built locally; it is not published yet (see [docs/desktop-plan.md](docs/desktop-plan.md)).
 
-Building it requires Rust and the Visual Studio Build Tools workload "Desktop development with C++". Then:
+Building it requires Rust 1.95.0 and the Visual Studio Build Tools workload "Desktop development with C++". Then:
 
 ```text
-npm run desktop:run      # build the daemon and the desktop shell, then open the app
-npm run desktop:verify   # launch it with isolated data and check pairing, permissions, a real service, tray, and error handling
+npm run desktop:run                # build the daemon and the desktop shell, then open the app
+npm run desktop:verify             # launch it with isolated data and check pairing, permissions, a real service, tray, and error handling
+npm run desktop:bundle             # build the installer, apps/desktop/src-tauri/target/release/bundle/nsis/DevDock_<version>_x64-setup.exe
+npm run desktop:verify-installer   # install it silently under a temporary profile folder, run a script with it, and uninstall it
 ```
+
+The installer carries the official Node.js 24.21.0 for Windows x64 (pinned by SHA-256 in `apps/desktop/runtime.json`) and the DevDock package built by `npm run package:local`. Projects use the first Node.js and npm on `PATH` and fall back to that bundled copy. It installs for the current user without administrator rights into `%LOCALAPPDATA%\DevDock`, the same folder that holds DevDock's data; uninstalling removes only the program files and keeps the data. Install and uninstall first ask a running DevDock to quit, so its scripts stop cleanly. Quit any running DevDock before `desktop:verify-installer`; it refuses to run when DevDock is installed for the current user.
 
 ## Fixture control
 

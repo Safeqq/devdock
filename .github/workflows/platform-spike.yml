@@ -65,9 +65,9 @@ jobs:
       - run: npm run check:versions
       - name: Build the installer
         run: npm run desktop:bundle
-      # The app's window cannot open in the runner's session, so CI runs the installed engine
-      # directly; `npm run desktop:verify-installer` without the flag also covers the window
-      # locally. These lines record why.
+      # On this runner the installed app starts but never opens its window or engine (cause not
+      # yet known), so CI runs the installed engine directly; `npm run desktop:verify-installer`
+      # without the flag covers the window locally. This step records the session and WebView2.
       - name: Record the runner session and WebView2 runtime
         run: |
           "session $([System.Diagnostics.Process]::GetCurrentProcess().SessionId), interactive $([Environment]::UserInteractive)"

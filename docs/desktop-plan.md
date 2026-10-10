@@ -123,7 +123,7 @@ Asumsi berikut belum terbukti dan bisa mengubah desain:
 1. **Capability untuk halaman daemon: terbukti.** Shell membuat capability saat runtime (`CapabilityBuilder`, fitur `dynamic-acl` bawaan Tauri) untuk origin daemon yang persis (`http://127.0.0.1:<port>/*`), hanya untuk jendela `main`, dengan izin `core:default` dan `dialog:allow-open`. Dialog folder native terbuka dari halaman daemon, sedangkan `dialog:save` yang tidak diberikan ditolak dengan pesan "not allowed". CSP daemon tidak perlu dilonggarkan: Tauri otomatis beralih dari IPC protokol khusus ke `postMessage` ketika `connect-src 'self'` memblokirnya.
 2. **Initialization script: terbukti.** Kode pairing disuntikkan sebagai `window.__DEVDOCK_DESKTOP__` sebelum skrip halaman berjalan; jendela masuk ke dashboard sekitar 1,4 detik setelah aplikasi dibuka tanpa formulir pairing, dan kode terhapus dari halaman setelah dipakai.
 3. **Helper Job Object sebagai sidecar tanpa konsol: terbukti.** Daemon dijalankan dengan `CREATE_NO_WINDOW`; service npm nyata mencapai `running/ready`, menjawab HTTP, lalu Stop menutup seluruh pohon prosesnya.
-4. **Ukuran installer: belum diukur.** Pengukuran memerlukan Node yang dibundel dan dipindahkan ke D4.
+4. **Ukuran installer: belum diukur.** Pengukuran memerlukan Node yang dibundel dan dipindahkan ke D4. Hasil D4: 29,0 MiB, lebih kecil daripada perkiraan.
 
 Keputusan tambahan dari spike:
 
@@ -195,6 +195,57 @@ Yang dibangun:
 
 Catatan verifikasi: di mesin pengembang notifikasi Windows dimatikan untuk pengguna (`DisabledForUser`), sehingga toast tidak bisa dilihat langsung. Event `script-alert` sudah terbukti keluar dari sidecar nyata.
 
+## Hasil D4 (2026-10-10)
+
+`npm run desktop:bundle` menghasilkan `DevDock_<versi>_x64-setup.exe`, installer NSIS per-user tanpa hak admin berukuran **29,0 MiB** (30.394.562 byte). Isinya:
+
+- **Shell:** `devdock-desktop.exe` (build release Tauri, Rust 1.95.0).
+- **`runtime/`:** distribusi resmi Node.js 24.21.0 win-x64 apa adanya, termasuk npm dan `LICENSE`-nya.
+  - Arsipnya dipin dengan SHA-256 di `apps/desktop/runtime.json` dan harus sama dengan `.node-version`.
+  - Unduhan disimpan di `.tools/` dan dicek ulang hash-nya setiap staging.
+- **`engine/`:** tarball CLI terverifikasi dari `npm run package:local`, dipasang offline. Setiap paket npm membawa file lisensinya sendiri.
+
+Keputusan:
+
+- **Engine memakai tarball CLI, bukan bundel esbuild.** Isi dan perilakunya sama dengan paket yang sudah diuji `verify:package`, tanpa mengubah cara daemon menemukan aset web dan helper Job Object. Biayanya sekitar 5.500 file, tetapi pemasangannya tetap beberapa detik.
+- **Folder instalasi tetap bawaan Tauri**, yaitu `%LOCALAPPDATA%DevDock`, yang juga folder data DevDock.
+  - Uninstaller Tauri hanya menghapus file yang dipasangnya lalu `RMDir` tanpa rekursi, sehingga `registry.sqlite` tetap ada. Ini sudah diuji.
+  - Memindahkan folder akan memerlukan fork template NSIS, atau hook yang diam-diam mengganti folder yang sudah dilihat pengguna.
+- **Hook NSIS** (`windows/installer-hooks.nsh`): sebelum memasang atau menghapus, installer menjalankan `devdock-desktop.exe --quit` lalu menunggu sampai 30 detik hingga exe tidak terkunci. Dengan begitu script berhenti rapi seperti Quit dari tray. Penutupan paksa Restart Manager bawaan Tauri tetap menjadi cadangan.
+- **Resource hanya untuk build installer** (`tauri.bundle.conf.json`), sehingga `cargo build` pengembangan tidak memerlukan staging. Shell memakai `runtime/node.exe` dan `engine/.../devdock.mjs` bila keduanya ada di samping exe; selain itu memakai `node` dari PATH dan build workspace. Variabel `DEVDOCK_SIDECAR_*` tetap menang untuk test.
+- **WebView2** memakai bootstrapper unduhan senyap (bawaan Tauri), karena Windows 11 sudah menyertakannya.
+- **Versi:** `check:versions` dan `release:version` kini ikut memeriksa dan mengubah `Cargo.toml`, entri `Cargo.lock`, dan `tauri.conf.json`.
+- **Ikon final** mengikuti logo di sidebar: kertas krem, bingkai, dan tiga garis tinta.
+
+`npm run desktop:verify-installer` (lokal) melakukan langkah berikut:
+
+1. Memasang installer secara senyap di bawah LOCALAPPDATA sementara, dengan tata letak yang sama seperti bawaan.
+2. Meluncurkan aplikasi tanpa Node.js di PATH dan memastikan engine berjalan dengan Node bawaan.
+3. Menjalankan script npm nyata.
+4. Menguninstal selagi aplikasi dan script masih berjalan.
+5. Memastikan aplikasi keluar dengan kode 0, script berhenti, file program hilang, dan data tetap ada.
+
+Job CI `Desktop installer (windows-2025)` memakai `--engine-only`. Di runner, aplikasi yang terpasang memang berjalan dan menangani `--quit`, tetapi dalam 90 detik tidak pernah membuka jendela maupun memulai engine. Tidak ada output stderr dan tidak crash.
+
+Penyebabnya belum diketahui. Sesi runner interaktif (sesi 2, `UserInteractive` true) dan WebView2 153 tersedia, jadi dugaan awal "tanpa desktop" terbantahkan. Kemungkinan macetnya terjadi saat membuat ikon tray atau jendela, sebelum sidecar dijalankan.
+
+Karena itu CI menjalankan langkah berikut:
+
+1. Memasang installer secara senyap.
+2. Menjalankan engine terpasang dengan Node bawaan, memakai baris perintah yang sama dengan shell.
+3. Menjalankan script npm.
+4. Menghentikan engine lewat pipa kontrolnya.
+5. Memastikan `--quit` pada exe terpasang keluar dengan kode 0.
+6. Menguninstal dan memeriksa file serta data.
+
+Bagian jendela dan hook uninstall saat aplikasi berjalan tetap diverifikasi lokal.
+
+Yang belum ada (masuk D5 atau nanti):
+
+- **Pemberitahuan lisensi pihak ketiga untuk crate Rust** di dalam installer belum dibuat. Node.js dan paket npm sudah membawa lisensinya; ini harus beres sebelum rilis 0.2.0.
+- **Penandatanganan kode:** installer belum ditandatangani, sehingga SmartScreen akan memperingatkan.
+- **Pembaruan otomatis** belum ada.
+
 ## Keputusan atas pertanyaan terbuka (disetujui 2026-10-09)
 
 1. **Node untuk menjalankan proyek.** DevDock memakai Node/npm yang terpasang di komputer (ditemukan dari PATH) bila ada, dan Node bawaan DevDock bila tidak ada. Node yang dipakai harus terlihat oleh pengguna.
@@ -213,7 +264,7 @@ Setiap tahap diakhiri verifikasi, lalu commit dan push.
 | D2 ✅ | Siklus hidup: tray, tutup ke tray, Keluar dengan shutdown rapi, single-instance, sidecar mati bila shell hilang, layar error bila sidecar gagal | Test otomatis: Keluar menghentikan service; kill shell tidak meninggalkan proses |
 | D3 ✅ (menunggu review pengguna) | UX desktop: onboarding, kartu script, panel Lanjutan, Grup, log, tombol Buka, bahasa sederhana | Browser/UI test diperbarui; review tampilan oleh pengguna |
 | D3.5 ✅ (menunggu review pengguna) | Celah sebelum packaging: edit/hapus grup, reset script, Check untuk status unknown, tray berisi jumlah dan Stop all, notifikasi Windows | Unit/integration/browser test baru; `desktop:verify` tetap lulus |
-| D4 | Packaging: Node + daemon dibundel, installer NSIS per-user, workflow CI Windows yang membangun installer lalu menginstal diam-diam, meluncurkan, dan menguninstal | Installer lulus smoke test di runner Windows; ukuran tercatat |
+| D4 ✅ | Packaging: Node + daemon dibundel, installer NSIS per-user, workflow CI Windows yang membangun installer lalu menginstal diam-diam, meluncurkan, dan menguninstal | Installer lulus smoke test di runner Windows; ukuran tercatat |
 | D5 | Dokumentasi pengguna (cara install, peringatan SmartScreen, cara uninstall) dan rilis 0.2.0 | Rilis dibuat setelah konfirmasi pengguna |
 | Nanti | macOS (`.dmg`), lalu Linux (`.AppImage`/`.deb`) | Matriks tiga OS seperti sekarang |
 

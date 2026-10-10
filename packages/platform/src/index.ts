@@ -40,6 +40,7 @@ export {
   type InspectedEnvironmentFile,
   inspectEnvironmentFiles,
   type LoopbackPortStatus,
+  processIdInUse,
 } from "./service-diagnostics.js";
 export {
   WindowsJobProcessAdapter,

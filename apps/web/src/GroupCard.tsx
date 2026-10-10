@@ -52,6 +52,7 @@ export function GroupCard({
   busy,
   onStart,
   onStop,
+  onEdit,
 }: {
   profile: Profile;
   snapshot: ProfileOperationSnapshot | null;
@@ -59,6 +60,7 @@ export function GroupCard({
   busy: boolean;
   onStart: () => void;
   onStop: () => void;
+  onEdit: () => void;
 }) {
   const state = groupState(snapshot, names);
   return (
@@ -105,6 +107,17 @@ export function GroupCard({
               Stop group
             </button>
           ) : null}
+          <button
+            className="btn icon-only ghost"
+            type="button"
+            onClick={onEdit}
+            // A running group keeps its members until it stops, so it is edited only when idle.
+            disabled={!state.canStart}
+            aria-label={`Edit group: ${profile.displayName}`}
+            title={state.canStart ? "Edit group" : "Stop the group to edit it"}
+          >
+            <Icon name="gear" />
+          </button>
         </div>
       </div>
     </article>

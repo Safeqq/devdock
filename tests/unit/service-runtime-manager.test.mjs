@@ -396,3 +396,69 @@ test("manager close cancels a pending automatic restart", async () => {
   assert.equal(scheduler.pending().length, 0);
   assert.equal(process.runs.length, 1);
 });
+
+test("a leftover run is marked stopped only on request, and then can start again", async () => {
+  const serviceId = "service-leftover";
+  const registry = restartRegistry(serviceId, { kind: "off" });
+  registry.saveRunSnapshot({
+    runId: "run-from-crashed-daemon",
+    serviceId,
+    processState: "running",
+    readinessState: "ready",
+    reconciliationState: "known",
+    pid: 4321,
+    startedAt: new Date().toISOString(),
+  });
+  const process = controlledAdapter();
+  const runtime = new ServiceRuntimeManager({
+    registry,
+    launcher: {},
+    adapterFactory: () => process.adapter,
+  });
+  const seen = [];
+  runtime.subscribeAll((snapshot) => seen.push(snapshot));
+
+  assert.equal(runtime.holds(serviceId), false);
+  assert.equal((await runtime.start(serviceId)).kind, "rejected");
+  await assert.rejects(runtime.forget(serviceId), { code: "SERVICE_ACTIVE" });
+
+  const marked = await runtime.markStopped(serviceId);
+  assert.equal(marked.processState, "stopped");
+  assert.equal(marked.reconciliationState, "known");
+  assert.equal(marked.failureReason, "MARKED_STOPPED_BY_USER");
+  assert.equal(marked.pid, 4321);
+  assert.equal(registry.latestRun(serviceId).failureReason, "MARKED_STOPPED_BY_USER");
+  assert.equal(seen.at(-1).runId, "run-from-crashed-daemon");
+  await assert.rejects(runtime.markStopped(serviceId), { code: "RUN_NOT_UNKNOWN" });
+
+  const started = await runtime.start(serviceId);
+  assert.equal(started.kind, "started");
+  assert.equal(runtime.holds(serviceId), true);
+  await assert.rejects(runtime.markStopped(serviceId), { code: "RUN_NOT_UNKNOWN" });
+  await runtime.close();
+});
+
+test("forgetting a service is refused while it runs and drops its logs afterwards", async () => {
+  const serviceId = "service-forget";
+  const registry = restartRegistry(serviceId, { kind: "off" });
+  const deleted = [];
+  registry.deleteService = (id) => deleted.push(id);
+  const process = controlledAdapter();
+  const runtime = new ServiceRuntimeManager({
+    registry,
+    launcher: {},
+    adapterFactory: () => process.adapter,
+  });
+  const started = await runtime.start(serviceId);
+  assert.ok(runtime.logBuffers.has(started.snapshot.runId));
+
+  await assert.rejects(runtime.forget(serviceId), { code: "SERVICE_ACTIVE" });
+  assert.deepEqual(deleted, []);
+
+  await runtime.stop(serviceId);
+  await runtime.forget(serviceId);
+  assert.deepEqual(deleted, [serviceId]);
+  assert.equal(runtime.holds(serviceId), false);
+  assert.equal(runtime.logBuffers.has(started.snapshot.runId), false);
+  await runtime.close();
+});

@@ -165,3 +165,20 @@ export async function checkLoopbackPort(port: number): Promise<LoopbackPortStatu
     });
   });
 }
+
+// Whether any process currently has this ID. Signal 0 only tests for existence on every
+// supported OS; nothing is sent. The answer says nothing about which program it is, because IDs
+// are reused, so callers must treat it as a hint and never as authority to stop anything.
+export function processIdInUse(pid: number): boolean | null {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (caught) {
+    const code =
+      caught !== null && typeof caught === "object" && "code" in caught ? caught.code : null;
+    if (code === "ESRCH") return false;
+    if (code === "EPERM") return true;
+    return null;
+  }
+}

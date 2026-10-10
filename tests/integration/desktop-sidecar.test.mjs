@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { createInterface } from "node:readline";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { productionProcessControlAvailable } from "../../packages/platform/dist/index.js";
 
 const daemonEntry = fileURLToPath(
   new URL("../../apps/daemon/dist/registry-api-cli.js", import.meta.url),
@@ -184,6 +185,72 @@ test("sidecar shuts down when its parent process is killed", {
   // The lock died with the daemon, so a new instance can use the same data directory.
   const { child, events } = startSidecar(env);
   await events.next("registry-api-ready");
+  child.stdin.end();
+  assert.equal(await waitForExit(child), 0);
+});
+
+test("sidecar reports running scripts and stops them all on request", {
+  skip: productionProcessControlAvailable()
+    ? false
+    : "No production process adapter for this platform",
+  timeout: 60_000,
+}, async (t) => {
+  const dataRoot = await mkdtemp(join(tmpdir(), "devdock-sidecar-tray-"));
+  t.after(() => rm(dataRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
+  const projectPath = join(dataRoot, "tray project");
+  await mkdir(projectPath);
+  await writeFile(
+    join(projectPath, "package.json"),
+    JSON.stringify({ name: "tray", private: true, scripts: { dev: "node keep.mjs" } }),
+  );
+  await writeFile(join(projectPath, "keep.mjs"), "setInterval(() => {}, 1000);\n");
+  const { child, events } = startSidecar(isolatedEnvironment(dataRoot));
+  t.after(() => {
+    if (child.exitCode === null) child.kill();
+  });
+
+  const ready = await events.next("registry-api-ready");
+  assert.deepEqual(await events.next("runtime-summary"), {
+    type: "runtime-summary",
+    active: 0,
+    projects: [],
+  });
+  const paired = await pair(ready.origin, ready.pairingCode);
+  const cookie = paired.headers.get("set-cookie").split(";")[0];
+  const { csrfToken } = await paired.json();
+  const post = async (path, body) => {
+    const response = await fetch(`${ready.origin}${path}`, {
+      method: "POST",
+      headers: {
+        origin: ready.origin,
+        cookie,
+        "x-devdock-csrf": csrfToken,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10_000),
+    });
+    return response.json();
+  };
+  const { project } = await post("/api/projects", { path: projectPath });
+  const { service } = await post(`/api/projects/${project.id}/services`, { scriptName: "dev" });
+  await post(`/api/services/${service.id}/start`, {});
+
+  let summary = await events.next("runtime-summary");
+  while (summary.active === 0) summary = await events.next("runtime-summary");
+  assert.deepEqual(summary.projects, [{ name: "tray project", active: 1 }]);
+
+  child.stdin.write(`${JSON.stringify({ type: "stop-all" })}\n`);
+  assert.deepEqual(await events.next("runtime-summary"), {
+    type: "runtime-summary",
+    active: 0,
+    projects: [],
+  });
+  const status = await (
+    await fetch(`${ready.origin}/api/services/${service.id}/status`, { headers: { cookie } })
+  ).json();
+  assert.equal(status.snapshot.processState, "stopped");
+
   child.stdin.end();
   assert.equal(await waitForExit(child), 0);
 });

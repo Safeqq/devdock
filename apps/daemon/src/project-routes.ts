@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import {
   CreateProfileRequestSchema,
+  DeletedResponseSchema,
   FolderInspectionRequestSchema,
   FolderInspectionResponseSchema,
   ProfileRuntimeStatusResponseSchema,
@@ -9,21 +10,24 @@ import {
   ProjectConfigurationExportSchema,
   RegisterProjectRequestSchema,
   RegistryIdSchema,
+  RunSnapshotResponseSchema,
   RuntimeSummaryResponseSchema,
   SelectServiceRequestSchema,
   ServiceActionRequestSchema,
   ServiceDiagnosticsResponseSchema,
+  ServiceLeftoverResponseSchema,
   ServiceRuntimeStatusResponseSchema,
   ServiceStartResponseSchema,
   ServiceStopResponseSchema,
   type SystemInfo,
   SystemInfoResponseSchema,
+  UpdateProfileRequestSchema,
   UpdateServiceSettingsRequestSchema,
 } from "@devdock/contracts";
-import type { NpmLauncher } from "@devdock/platform";
+import { checkLoopbackPort, type NpmLauncher, processIdInUse } from "@devdock/platform";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { ProfileRuntimeManager } from "./profile-runtime-manager.js";
-import type { ProjectRegistry } from "./project-registry.js";
+import { type ProjectRegistry, ProjectRegistryError } from "./project-registry.js";
 import type { ServiceRuntimeManager } from "./service-runtime-manager.js";
 
 function invalid(reply: FastifyReply) {
@@ -243,6 +247,77 @@ export function registerProjectRoutes(
       requiredEnvKeys: parsed.data.requiredEnvKeys,
     });
     return { service };
+  });
+
+  app.post("/api/services/:id/delete", async (request, reply) => {
+    const id = idFrom(request.params);
+    if (id === null || !ServiceActionRequestSchema.safeParse(request.body).success) {
+      return invalid(reply);
+    }
+    if (runtime === undefined) registry.deleteService(id);
+    else await runtime.forget(id);
+    return DeletedResponseSchema.parse({ id });
+  });
+
+  // Hints for a run left over from an earlier DevDock session; see ServiceLeftoverResponseSchema.
+  app.get("/api/services/:id/leftover", async (request, reply) => {
+    const id = idFrom(request.params);
+    if (id === null) return invalid(reply);
+    if (runtime === undefined) return lifecycleUnavailable(reply);
+    const service = registry.getService(id);
+    const { snapshot, ownership } = await runtime.status(id);
+    if (
+      snapshot === null ||
+      (snapshot.reconciliationState !== "unknown" && ownership !== "unknown")
+    ) {
+      throw new ProjectRegistryError("RUN_NOT_UNKNOWN", "The service's status is known");
+    }
+    const port =
+      service.expectedPort === undefined
+        ? ({ status: "not_configured" } as const)
+        : { status: await checkLoopbackPort(service.expectedPort), port: service.expectedPort };
+    return ServiceLeftoverResponseSchema.parse({
+      pid: snapshot.pid ?? null,
+      processRunning: snapshot.pid === undefined ? null : processIdInUse(snapshot.pid),
+      port,
+      canMarkStopped: !runtime.holds(id),
+    });
+  });
+
+  app.post("/api/services/:id/mark-stopped", async (request, reply) => {
+    const id = idFrom(request.params);
+    if (id === null || !ServiceActionRequestSchema.safeParse(request.body).success) {
+      return invalid(reply);
+    }
+    if (runtime === undefined) return lifecycleUnavailable(reply);
+    return RunSnapshotResponseSchema.parse({ snapshot: await runtime.markStopped(id) });
+  });
+
+  app.post("/api/profiles/:id/update", async (request, reply) => {
+    const id = idFrom(request.params);
+    if (id === null) return invalid(reply);
+    const parsed = UpdateProfileRequestSchema.safeParse(request.body);
+    if (!parsed.success) return invalid(reply);
+    const profile = await registry.validateProfileUpdate(
+      id,
+      parsed.data.displayName,
+      parsed.data.services,
+    );
+    const save = () => registry.saveProfile(profile);
+    return {
+      profile: profileRuntime === undefined ? save() : profileRuntime.changeWhileIdle(id, save),
+    };
+  });
+
+  app.post("/api/profiles/:id/delete", async (request, reply) => {
+    const id = idFrom(request.params);
+    if (id === null || !ServiceActionRequestSchema.safeParse(request.body).success) {
+      return invalid(reply);
+    }
+    const remove = () => registry.deleteProfile(id);
+    if (profileRuntime === undefined) remove();
+    else profileRuntime.changeWhileIdle(id, remove);
+    return DeletedResponseSchema.parse({ id });
   });
 
   app.post("/api/projects/:id/profiles", async (request, reply) => {

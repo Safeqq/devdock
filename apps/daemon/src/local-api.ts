@@ -97,7 +97,11 @@ function projectError(caught: unknown): { status: number; code: string; message:
             caught.code === "PROJECT_IDENTITY_CHANGED" ||
             caught.code === "SERVICE_ENV_FILE_UNAVAILABLE" ||
             caught.code === "SERVICE_ENV_KEY_MISSING" ||
-            caught.code === "OPEN_APP_PORT_UNCONFIGURED"
+            caught.code === "OPEN_APP_PORT_UNCONFIGURED" ||
+            caught.code === "SERVICE_ACTIVE" ||
+            caught.code === "SERVICE_IN_GROUP" ||
+            caught.code === "PROFILE_ACTIVE" ||
+            caught.code === "RUN_NOT_UNKNOWN"
           ? 409
           : 400;
     return { status, code: caught.code, message: caught.message };

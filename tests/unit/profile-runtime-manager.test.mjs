@@ -285,3 +285,43 @@ test("Stop cancels an in-flight profile startup and rolls back its owned run", a
     await manager.close();
   }
 });
+
+test("a group can be changed only while it is not running", async () => {
+  const api = randomUUID();
+  const profile = {
+    id: randomUUID(),
+    projectId: randomUUID(),
+    displayName: "API",
+    services: [{ serviceId: api, dependsOn: [] }],
+  };
+  const manager = new ProfileRuntimeManager({
+    registry: fakeRegistry([profile]),
+    runtime: fakeRuntime(),
+  });
+  try {
+    assert.equal(manager.busy(profile.id), false);
+    await manager.start(profile.id);
+    await waitForState(manager, profile.id, "ready");
+    assert.equal(manager.busy(profile.id), true);
+    let changed = false;
+    assert.throws(
+      () =>
+        manager.changeWhileIdle(profile.id, () => {
+          changed = true;
+        }),
+      { code: "PROFILE_ACTIVE" },
+    );
+    assert.equal(changed, false);
+
+    await manager.stop(profile.id);
+    assert.equal(manager.busy(profile.id), false);
+    assert.equal(
+      manager.changeWhileIdle(profile.id, () => "saved"),
+      "saved",
+    );
+    // The last result described the old members, so it is gone after a change.
+    assert.equal((await manager.status(profile.id)).snapshot, null);
+  } finally {
+    await manager.close();
+  }
+});

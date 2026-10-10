@@ -11,6 +11,10 @@ All notable changes to DevDock will be documented in this file.
 - A single-instance lock per data directory, so the desktop app and CLI cannot manage the same services at once.
 - A development build of the Windows desktop shell (Tauri v2) that runs the daemon as a hidden sidecar, pairs its window automatically, grants the native folder dialog only to the daemon's exact origin, blocks navigation away from it, and stops the daemon when the app exits.
 - Desktop app lifecycle: the window hides to a tray icon with Open and Quit, a second launch shows the existing window, `--quit` stops a running instance, the window signs back in by itself when its session ends, and an error window with Try again and Close appears when the engine cannot start or stops unexpectedly.
+- Groups can be edited and deleted while they are stopped, and a script's settings and run history can be reset (or a card without a `package.json` script removed) while it is stopped and not part of a group.
+- A Check dialog for scripts whose status DevDock lost after it was closed abruptly: it shows whether the recorded process ID is in use and whether the port is busy, as hints only, and lets the user mark the run as stopped once it is gone. DevDock still never stops or adopts such a program itself.
+- The desktop tray lists how many scripts run per project, shows the count in its tooltip, and offers Stop all scripts without quitting.
+- Windows notifications from the desktop app when a script exits with an error, fails to launch, or misses its readiness deadline while the DevDock window is hidden or not focused.
 
 ### Changed
 

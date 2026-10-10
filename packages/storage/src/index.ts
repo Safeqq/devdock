@@ -339,6 +339,14 @@ export class RegistryDatabase {
     return Number(result.changes) === 0 ? null : validated;
   }
 
+  // Removes a service together with its run history. Returns false when it did not exist.
+  deleteService(id: string): boolean {
+    return this.#transaction(() => {
+      run(this.#db, "DELETE FROM runs WHERE service_id = ?", id);
+      return Number(run(this.#db, "DELETE FROM services WHERE id = ?", id).changes) > 0;
+    });
+  }
+
   getService(id: string): ServiceConfig | null {
     const row = one(this.#db, "SELECT config_json FROM services WHERE id = ?", id);
     if (row === undefined) return null;
@@ -374,6 +382,22 @@ export class RegistryDatabase {
       new Date().toISOString(),
     );
     return validated;
+  }
+
+  updateProfile(config: ProfileConfig): ProfileConfig | null {
+    const validated = ProfileConfigSchema.parse(config);
+    const result = run(
+      this.#db,
+      "UPDATE profiles SET config_json = ? WHERE id = ? AND project_id = ?",
+      JSON.stringify(validated),
+      validated.id,
+      validated.projectId,
+    );
+    return Number(result.changes) === 0 ? null : validated;
+  }
+
+  deleteProfile(id: string): boolean {
+    return Number(run(this.#db, "DELETE FROM profiles WHERE id = ?", id).changes) > 0;
   }
 
   getProfile(id: string): ProfileConfig | null {

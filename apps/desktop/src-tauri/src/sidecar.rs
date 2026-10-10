@@ -2,7 +2,8 @@
 //!
 //! The daemon prints JSON lines on stdout. The shell waits for `registry-api-ready` to learn the
 //! loopback origin and the single-use pairing code, then keeps draining stdout so the pipe never
-//! fills. Closing stdin, or this process dying, makes the daemon shut down on its own.
+//! fills; later lines report running scripts for the tray and failures for notifications.
+//! Closing stdin, or this process dying, makes the daemon shut down on its own.
 
 use std::error::Error;
 use std::io::{BufRead, BufReader, Write};
@@ -20,6 +21,23 @@ const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
 pub struct Ready {
     pub origin: String,
     pub pairing_code: String,
+}
+
+/// How many scripts are running, overall and per project, for the tray.
+#[derive(Clone, Default)]
+pub struct RuntimeSummary {
+    pub active: u64,
+    pub projects: Vec<(String, u64)>,
+}
+
+/// What the daemon reports after it is ready.
+pub enum SidecarEvent {
+    Summary(RuntimeSummary),
+    /// A script failed; the text is ready to show in a notification.
+    Alert {
+        title: String,
+        body: String,
+    },
 }
 
 /// Owns the daemon process for the lifetime of the app.
@@ -51,10 +69,30 @@ fn text_field(event: &serde_json::Value, name: &str) -> Option<String> {
     event.get(name)?.as_str().map(str::to_owned)
 }
 
+fn summary_from(event: &serde_json::Value) -> Option<RuntimeSummary> {
+    let projects = event
+        .get("projects")?
+        .as_array()?
+        .iter()
+        .filter_map(|project| {
+            Some((
+                text_field(project, "name")?,
+                project.get("active")?.as_u64()?,
+            ))
+        })
+        .collect();
+    Some(RuntimeSummary {
+        active: event.get("active")?.as_u64()?,
+        projects,
+    })
+}
+
 impl Sidecar {
-    /// Starts the daemon and waits for it to become ready. `on_unexpected_exit` runs on the
-    /// reader thread if the daemon's output ends without the shell having asked it to stop.
+    /// Starts the daemon and waits for it to become ready. `on_event` runs on the reader thread
+    /// for each report after readiness. `on_unexpected_exit` runs there too if the daemon's output
+    /// ends without the shell having asked it to stop.
     pub fn start(
+        on_event: impl Fn(SidecarEvent) + Send + 'static,
         on_unexpected_exit: impl FnOnce() + Send + 'static,
     ) -> Result<(Sidecar, Ready), Box<dyn Error>> {
         let mut command = Command::new(node_executable());
@@ -123,6 +161,18 @@ impl Sidecar {
                             let _ = sender.send(code);
                         }
                     }
+                    Some("runtime-summary") => {
+                        if let Some(summary) = summary_from(&event) {
+                            on_event(SidecarEvent::Summary(summary));
+                        }
+                    }
+                    Some("script-alert") => {
+                        if let (Some(title), Some(body)) =
+                            (text_field(&event, "title"), text_field(&event, "body"))
+                        {
+                            on_event(SidecarEvent::Alert { title, body });
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -159,16 +209,23 @@ impl Sidecar {
     pub fn request_pairing_code(&self) -> Result<String, String> {
         let (sender, receiver) = mpsc::channel();
         *self.pending_code.lock().unwrap() = Some(sender);
-        {
-            let mut stdin = self.stdin.lock().unwrap();
-            let pipe = stdin.as_mut().ok_or("The DevDock engine is not running.")?;
-            pipe.write_all(b"{\"type\":\"issue-pairing-code\"}\n")
-                .and_then(|()| pipe.flush())
-                .map_err(|error| format!("Could not reach the DevDock engine: {error}"))?;
-        }
+        self.send(b"{\"type\":\"issue-pairing-code\"}\n")?;
         receiver
             .recv_timeout(PAIRING_CODE_TIMEOUT)
             .map_err(|_| "The DevDock engine did not answer.".to_string())
+    }
+
+    /// Asks the daemon to stop every running group and script while DevDock keeps running.
+    pub fn stop_all(&self) -> Result<(), String> {
+        self.send(b"{\"type\":\"stop-all\"}\n")
+    }
+
+    fn send(&self, line: &[u8]) -> Result<(), String> {
+        let mut stdin = self.stdin.lock().unwrap();
+        let pipe = stdin.as_mut().ok_or("The DevDock engine is not running.")?;
+        pipe.write_all(line)
+            .and_then(|()| pipe.flush())
+            .map_err(|error| format!("Could not reach the DevDock engine: {error}"))
     }
 
     /// Asks the daemon to stop its services and exit, then waits for it. Falls back to killing

@@ -1,4 +1,5 @@
 import {
+  DeletedResponseSchema,
   type ServiceDiagnosticsResponse,
   ServiceDiagnosticsResponseSchema,
   ServiceResponseSchema,
@@ -40,9 +41,11 @@ export function ScriptSettings({
   projectPath,
   system,
   running,
+  groups,
   csrfToken,
   onClose,
   onSaved,
+  onForgotten,
   onUnauthorized,
 }: {
   entry: ScriptEntry;
@@ -50,9 +53,12 @@ export function ScriptSettings({
   projectPath: string;
   system: SystemInfo | null;
   running: boolean;
+  // Names of the groups that start this script; it can't be reset while any group uses it.
+  groups: readonly string[];
   csrfToken: string;
   onClose: () => void;
   onSaved: (service: Service) => void;
+  onForgotten: (serviceId: string) => void;
   onUnauthorized: () => void;
 }) {
   const service = entry.service;
@@ -75,6 +81,10 @@ export function ScriptSettings({
   const [saving, setSaving] = useState(false);
   const [checking, setChecking] = useState(false);
   const [diagnostics, setDiagnostics] = useState<ServiceDiagnosticsResponse | null>(null);
+  const [confirmForget, setConfirmForget] = useState(false);
+  const [forgetting, setForgetting] = useState(false);
+  // A card without a script in package.json goes away when forgotten; others just start over.
+  const removesCard = entry.command === null;
 
   function validate() {
     const found: Record<string, string> = {};
@@ -170,6 +180,26 @@ export function ScriptSettings({
       else setError(friendlyError(caught).message);
     } finally {
       setChecking(false);
+    }
+  }
+
+  async function forget() {
+    if (service === null) return;
+    setForgetting(true);
+    setError(null);
+    try {
+      await apiPost(
+        `/api/services/${service.id}/delete`,
+        {},
+        (value) => DeletedResponseSchema.parse(value),
+        csrfToken,
+      );
+      onForgotten(service.id);
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.status === 401) onUnauthorized();
+      else setError(friendlyError(caught).message);
+      setForgetting(false);
+      setConfirmForget(false);
     }
   }
 
@@ -398,6 +428,62 @@ export function ScriptSettings({
               </>
             )}
           </section>
+
+          {service === null ? null : (
+            <section className="group-box" aria-labelledby="settings-forget">
+              <h3 id="settings-forget">{removesCard ? "Remove this card" : "Start over"}</h3>
+              <small>
+                {removesCard
+                  ? "Forgets this card, its settings, and its run history. package.json and your files are not changed."
+                  : "Forgets these settings and the run history. The script stays; package.json and your files are not changed."}
+              </small>
+              {running ? (
+                <small className="field-error">Stop the script first.</small>
+              ) : groups.length > 0 ? (
+                <small className="field-error">
+                  It's part of {groups.length === 1 ? "the group" : "the groups"}{" "}
+                  {groups.map((name, index) => (
+                    <span key={name}>
+                      {index === 0 ? "" : ", "}
+                      <strong>{name}</strong>
+                    </span>
+                  ))}
+                  . Remove it from {groups.length === 1 ? "that group" : "those groups"} first.
+                </small>
+              ) : null}
+              {confirmForget ? (
+                <div className="confirm-row">
+                  <span>{removesCard ? "Remove it?" : "Reset to defaults?"}</span>
+                  <button
+                    className="btn ghost tiny"
+                    type="button"
+                    onClick={() => setConfirmForget(false)}
+                  >
+                    Keep
+                  </button>
+                  <button
+                    className="btn danger-soft tiny"
+                    type="button"
+                    onClick={() => void forget()}
+                    disabled={forgetting}
+                  >
+                    <Icon name="trash" />
+                    {forgetting ? "Working…" : removesCard ? "Remove" : "Reset"}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  className="btn danger-soft tiny"
+                  type="button"
+                  onClick={() => setConfirmForget(true)}
+                  disabled={running || groups.length > 0}
+                >
+                  <Icon name="trash" />
+                  {removesCard ? "Remove card" : "Reset to defaults"}
+                </button>
+              )}
+            </section>
+          )}
 
           <div className="preview">
             <span className="eyebrow">What DevDock runs</span>

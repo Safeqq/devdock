@@ -280,6 +280,45 @@ test("browser pairs, previews a folder, and manages settings without executing a
     step("export");
     await assert.rejects(access(markerPath));
 
+    await groupCard.getByRole("button", { name: "Edit group: Backend Only" }).click();
+    const editDialog = page.getByRole("dialog", { name: "Edit group" });
+    assert.equal(await editDialog.getByLabel("Group name").inputValue(), "Backend Only");
+    await editDialog.getByLabel("Group name").fill("Dev Then Build");
+    await editDialog.locator("label.pick").filter({ hasText: "build" }).locator("input").check();
+    await editDialog.getByRole("button", { name: "Save group" }).click();
+    const editedCard = page.getByRole("article", { name: "Dev Then Build group" });
+    await editedCard.getByText(", each once the one before is ready").waitFor();
+    step("edit group");
+
+    // A script a group starts can't be reset until it leaves the group.
+    await devCard.getByRole("button", { name: "Settings for dev" }).click();
+    await settings.getByText("Remove it from that group first.", { exact: false }).waitFor();
+    assert.equal(
+      await settings.getByRole("button", { name: "Reset to defaults" }).isDisabled(),
+      true,
+    );
+    await settings.getByRole("button", { name: "Cancel" }).click();
+
+    await editedCard.getByRole("button", { name: "Edit group: Dev Then Build" }).click();
+    await page
+      .getByRole("dialog", { name: "Edit group" })
+      .getByRole("button", { name: "Delete group" })
+      .click();
+    const confirmGroup = page.getByRole("dialog", { name: "Delete the group Dev Then Build?" });
+    await confirmGroup.getByRole("button", { name: "Delete group" }).click();
+    await page.getByText("Deleted the group Dev Then Build.").waitFor();
+    assert.equal(await page.getByRole("article", { name: "Dev Then Build group" }).count(), 0);
+    step("delete group");
+
+    await devCard.getByRole("button", { name: "Settings for dev" }).click();
+    await settings.getByRole("button", { name: "Reset to defaults" }).click();
+    await settings.getByRole("button", { name: "Reset", exact: true }).click();
+    await page.getByText("dev is back to its default settings.").waitFor();
+    await devCard.getByRole("button", { name: "Settings for dev" }).click();
+    assert.equal(await settings.getByLabel("Port", { exact: true }).inputValue(), "");
+    await settings.getByRole("button", { name: "Cancel" }).click();
+    step("reset settings");
+
     await page.reload();
     await page.getByRole("heading", { name: "Browser Fixture", level: 1 }).waitFor();
     const unpairedContext = await browser.newContext();
@@ -349,6 +388,84 @@ test("desktop shell pairing code signs the window in without the pairing form", 
     const fallbackPage = await rejected.newPage();
     await fallbackPage.goto(origin);
     await fallbackPage.getByRole("heading", { name: "Pair this browser" }).waitFor();
+    assert.deepEqual(pageErrors, []);
+  } finally {
+    await Promise.all(contexts.map((context) => context.close()));
+    await api?.close();
+    store?.close();
+    await rm(safeRoot, { recursive: true, force: true });
+  }
+});
+
+test("a script left over from an earlier session is checked and released by the user", {
+  timeout: 35_000,
+}, async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "devdock-browser-leftover-"));
+  const safeRoot = cleanupRoot(tempRoot, "devdock-browser-leftover-");
+  const projectPath = join(tempRoot, "leftover");
+  let store;
+  let api;
+  const contexts = [];
+  try {
+    await mkdir(projectPath);
+    await writeFile(
+      join(projectPath, "package.json"),
+      JSON.stringify({ name: "leftover", scripts: { dev: "node dev.mjs" } }),
+    );
+    store = await RegistryDatabase.open(join(tempRoot, "data", "registry.sqlite"));
+    const registry = new ProjectRegistry(store);
+    const project = await registry.registerProject(projectPath, "Leftover Fixture");
+    const service = await registry.selectService(project.id, "dev");
+    // Active when the previous DevDock session ended, without a recorded process ID.
+    registry.saveRunSnapshot({
+      runId: "3f7c2b9e-0b8f-4c55-9d0e-2f1a6f7d8c11",
+      serviceId: service.id,
+      processState: "running",
+      readinessState: "unknown",
+      reconciliationState: "known",
+      startedAt: new Date().toISOString(),
+    });
+    const launcher = await NpmLauncher.locate();
+    const runtime = new ServiceRuntimeManager({
+      registry,
+      launcher,
+      adapterFactory: () => {
+        throw new Error("This test never starts a script");
+      },
+    });
+    api = createLocalApiServer({
+      registry,
+      launcher,
+      runtime,
+      webRoot: fileURLToPath(new URL("../../apps/web/dist/", import.meta.url)),
+    });
+    const origin = await api.listen(0);
+    const context = await browser.newContext();
+    contexts.push(context);
+    context.setDefaultTimeout(15_000);
+    await context.addInitScript((code) => {
+      window.__DEVDOCK_DESKTOP__ = { pairingCode: code };
+    }, api.pairingCode);
+    const page = await context.newPage();
+    const pageErrors = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    await page.goto(origin);
+    await page.getByRole("heading", { name: "Leftover Fixture", level: 1 }).waitFor();
+
+    const devCard = page.getByRole("article", { name: "dev script" });
+    await devCard.getByText("Status unknown").waitFor();
+    await devCard.getByText("DevDock restarted while this was running").waitFor();
+    await devCard.getByRole("button", { name: "Check whether dev is still running" }).click();
+    const dialog = page.getByRole("dialog", { name: "Is dev still running?" });
+    const seen = dialog.getByRole("list", { name: "What DevDock can see" });
+    await seen.getByText("Not recorded").waitFor();
+    await seen.getByText("Not set").waitFor();
+    await dialog.getByText("Nothing seems to be left.").waitFor();
+    await dialog.getByRole("button", { name: "Mark as stopped" }).click();
+    await page.getByText("dev is marked as stopped. You can start it again.").waitFor();
+    await devCard.getByRole("button", { name: "Start dev" }).waitFor();
+    assert.equal(await devCard.getByText("Status unknown").count(), 0);
+    assert.equal(registry.latestRun(service.id).failureReason, "MARKED_STOPPED_BY_USER");
     assert.deepEqual(pageErrors, []);
   } finally {
     await Promise.all(contexts.map((context) => context.close()));

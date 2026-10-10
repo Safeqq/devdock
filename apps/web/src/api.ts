@@ -6,6 +6,7 @@ import type {
   RunSnapshot,
   ScriptDiscovery,
   ServiceConfig,
+  ServiceLeftover,
   SystemInfo,
 } from "@devdock/contracts";
 
@@ -13,7 +14,13 @@ export type Project = ProjectRecord;
 export type Service = ServiceConfig;
 export type Profile = ProfileConfig;
 export type Discovery = ScriptDiscovery;
-export type { FolderInspection, ProfileOperationSnapshot, RunSnapshot, SystemInfo };
+export type {
+  FolderInspection,
+  ProfileOperationSnapshot,
+  RunSnapshot,
+  ServiceLeftover,
+  SystemInfo,
+};
 
 export interface ProjectDetail {
   project: Project;
@@ -180,6 +187,12 @@ const friendlyMessages: Record<string, string> = {
     "DevDock does not know your app's address yet. Add its port in the script's settings.",
   PROFILE_CYCLE: "These scripts wait for each other in a loop, so none of them could start.",
   PROFILE_CONFIG_INVALID: "This group is not valid. Give it a name and choose at least one script.",
+  PROFILE_ACTIVE: "Stop the group before changing or deleting it.",
+  PROFILE_NOT_FOUND: "This group no longer exists.",
+  SERVICE_ACTIVE: "Stop this script before resetting it.",
+  SERVICE_IN_GROUP: "This script is part of a group. Remove it from the group first.",
+  RUN_NOT_UNKNOWN: "DevDock already knows this script's status. Nothing to check.",
+  MARKED_STOPPED_BY_USER: "You marked it as stopped.",
   OWNERSHIP_UNKNOWN:
     "DevDock can't tell whether this is still running from an earlier session, so it won't start a second copy.",
   PROCESS_EXITED_WITH_FAILURE: "It stopped with an error; its output shows why.",

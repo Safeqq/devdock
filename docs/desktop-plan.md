@@ -162,13 +162,38 @@ Tema (2026-10-10): atas permintaan pengguna, tampilan beralih dari tema gelap mo
 
 Alur dan teks UI tidak berubah; screenshot di `docs/screenshots/d3/` sudah memakai tema ini.
 
-Belum ada di D3:
+Belum ada di D3 (empat yang pertama ditutup di D3.5):
 
 - Menghapus service atau grup, dan mengedit grup.
-- Tema terang.
 - Notifikasi Windows.
+- Menu tray yang menampilkan script berjalan dan **Stop all**.
+- Jalan keluar dari kartu "Status unknown" setelah daemon restart.
+- Mode gelap.
 - Ikon final.
-- Menjalankan ulang otomatis untuk run "Status unknown" setelah daemon restart.
+
+## Hasil D3.5 (2026-10-10)
+
+Spec: `docs/superpowers/specs/2026-10-10-d3-5-desktop-gaps-design.md`. Tujuannya menutup celah yang membuat pengguna baru terjebak sebelum installer 0.2.0 beredar.
+
+Yang dibangun:
+
+- **Grup:** tombol gear pada kartu grup membuka dialog **Edit group** (nama, script, urutan). Dialog ini juga punya **Delete group** dengan konfirmasi. Keduanya hanya bisa dipakai ketika grup tidak berjalan.
+- **Reset script:** bagian baru di Script settings.
+  - **Reset to defaults** melupakan pengaturan dan histori run; kartunya tetap ada.
+  - **Remove card** untuk kartu tanpa script di `package.json`.
+  - Ditolak selama script berjalan atau masih menjadi anggota grup, dan UI menyebut nama grupnya.
+- **Status unknown:** kartu menampilkan tombol **Check**. Dialognya menunjukkan apakah PID lama masih dipakai suatu proses dan apakah port terpakai. Keduanya hanya petunjuk, karena PID bisa dipakai ulang program lain.
+  - Pengguna menutup program itu sendiri bila perlu, lalu menekan **Mark as stopped**.
+  - Run yang masih dipegang sesi daemon saat ini diarahkan ke **Stop again**.
+  - Sesuai `AGENT.md` §6, tidak ada auto-adopt atau kill berdasarkan PID.
+- **Tray:** menu kini berisi jumlah script berjalan per proyek (maksimal lima baris, sisanya digabung), **Stop all scripts**, dan **Quit DevDock (stops all scripts)**. Tooltip ikut menampilkan jumlahnya.
+  - Datanya berasal dari event `runtime-summary` di stdout sidecar.
+  - **Stop all** mengirim `{"type":"stop-all"}` lewat stdin.
+  - `&` pada nama proyek digandakan agar tidak menjadi garis bawah pintasan Windows.
+- **Notifikasi:** `tauri-plugin-notification` 2.5.1 (dipin) menampilkan event `script-alert` ketika jendela tersembunyi, diminimalkan, atau tidak fokus.
+  - Dari `targetdebug`, plugin memakai AppUserModelID milik PowerShell. ID aplikasi sendiri baru dipakai setelah terpasang (D4).
+
+Catatan verifikasi: di mesin pengembang notifikasi Windows dimatikan untuk pengguna (`DisabledForUser`), sehingga toast tidak bisa dilihat langsung. Event `script-alert` sudah terbukti keluar dari sidecar nyata.
 
 ## Keputusan atas pertanyaan terbuka (disetujui 2026-10-09)
 
@@ -187,6 +212,7 @@ Setiap tahap diakhiri verifikasi, lalu commit dan push.
 | D1 ✅ | Spike: shell Tauri menjalankan sidecar, pairing otomatis, jendela menampilkan dashboard yang ada, dialog folder berfungsi | Demo lokal Windows; keempat asumsi di atas terjawab |
 | D2 ✅ | Siklus hidup: tray, tutup ke tray, Keluar dengan shutdown rapi, single-instance, sidecar mati bila shell hilang, layar error bila sidecar gagal | Test otomatis: Keluar menghentikan service; kill shell tidak meninggalkan proses |
 | D3 ✅ (menunggu review pengguna) | UX desktop: onboarding, kartu script, panel Lanjutan, Grup, log, tombol Buka, bahasa sederhana | Browser/UI test diperbarui; review tampilan oleh pengguna |
+| D3.5 ✅ (menunggu review pengguna) | Celah sebelum packaging: edit/hapus grup, reset script, Check untuk status unknown, tray berisi jumlah dan Stop all, notifikasi Windows | Unit/integration/browser test baru; `desktop:verify` tetap lulus |
 | D4 | Packaging: Node + daemon dibundel, installer NSIS per-user, workflow CI Windows yang membangun installer lalu menginstal diam-diam, meluncurkan, dan menguninstal | Installer lulus smoke test di runner Windows; ukuran tercatat |
 | D5 | Dokumentasi pengguna (cara install, peringatan SmartScreen, cara uninstall) dan rilis 0.2.0 | Rilis dibuat setelah konfirmasi pengguna |
 | Nanti | macOS (`.dmg`), lalu Linux (`.AppImage`/`.deb`) | Matriks tiga OS seperti sekarang |

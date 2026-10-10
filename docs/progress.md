@@ -1,6 +1,6 @@
 # DevDock Progress
 
-Fase/subfase aktif: 8 / 8.0–8.3 (sampai UX desktop D3) verified lokal Windows, 8.3 menunggu review tampilan pengguna; D1a dan spike 8.1 lulus matriks tiga OS. Fase 0–7 dan rilis 0.1.0 (`v0.1.0` pada `3d5c631`) verified pada tiga OS.
+Fase/subfase aktif: 8 / 8.0–8.3 (sampai UX desktop D3 dan D3.5) verified lokal Windows, 8.3 menunggu review tampilan pengguna; D1a dan spike 8.1 lulus matriks tiga OS. Fase 0–7 dan rilis 0.1.0 (`v0.1.0` pada `3d5c631`) verified pada tiga OS.
 Status fase 0: verified pada Windows native x64 dan matriks GitHub Windows 2025 x64, macOS 15 arm64, serta Ubuntu 24.04 x64
 Status fase 1: verified; supervisor, fixture tree, sentinel, dan adapter native lulus pada kombinasi platform yang sesuai
 Status fase 2: verified; registry, discovery, SQLite persistence, dan npm launch plan lulus pada ketiga keluarga OS
@@ -94,6 +94,18 @@ OS utama: Windows native, build 10.0.26200, x64
     - Kejelasan: layar Welcome dibuat seperti halaman depan koran, setiap section diberi label dan petunjuk singkat, dan panel output diberi label "Output". Halaman loading dan error shell diselaraskan.
     - `biome.json` kini memakai ignore file Git setelah `biome check --write apps` sempat memformat file generate Tauri di `target/` dan merusak build.
   - **D3.3 shell (`fb2edba`):** perintah `open_in_browser` dan `open_folder` memakai fungsi `tauri-plugin-opener` 2.7.0 (dipin) tanpa memberi izin plugin opener ke halaman.
+- 8.3/D3.5 celah sebelum packaging (implemented dan verified lokal; menunggu review pengguna). Pengguna meminta keempat saran dikerjakan sebelum D4. Spec ada di `docs/superpowers/specs/2026-10-10-d3-5-desktop-gaps-design.md`.
+  - **Storage dan registry:** `deleteService` (histori run ikut dihapus dalam satu transaksi), `updateProfile`, dan `deleteProfile` tanpa migrasi baru. Validasi edit grup memakai jalur yang sama dengan membuat grup.
+  - **Runtime:**
+    - `ServiceRuntimeManager.forget` menolak run aktif/unknown lalu membersihkan timer restart, probe, supervisor, dan log run service itu.
+    - `markStopped` hanya menerima run histori unknown dari sesi daemon sebelumnya.
+    - `subscribeAll` memberi satu pengamat untuk semua service.
+    - `ProfileRuntimeManager.changeWhileIdle` memeriksa dan mengubah grup dalam satu giliran, lalu menaikkan revisi sehingga Start yang sempat membaca konfigurasi lama mengulang.
+  - **API:** `POST /api/services/:id/delete`, `GET /api/services/:id/leftover`, `POST /api/services/:id/mark-stopped`, `POST /api/profiles/:id/update`, dan `POST /api/profiles/:id/delete`. Kode 409 baru: `SERVICE_ACTIVE`, `SERVICE_IN_GROUP`, `PROFILE_ACTIVE`, dan `RUN_NOT_UNKNOWN`. `processIdInUse` di `@devdock/platform` memakai sinyal 0 dan hanya dipakai sebagai petunjuk.
+  - **Bridge desktop:** `DesktopBridge` hanya aktif bila `DEVDOCK_CONTROL=stdin`. Ia mengirim `runtime-summary` (dikumpulkan per giliran event loop dan hanya bila berubah) serta `script-alert` (sekali per run gagal), dan menjalankan `stop-all`.
+  - **UI:** `GroupDialog` (pengganti `NewGroupDialog`) untuk membuat, mengedit, dan menghapus grup; tombol gear pada kartu grup; bagian Start over/Remove this card di Script settings; tombol **Check** dan `LeftoverDialog` untuk status unknown. Teks alasan status unknown kini membedakan restart daemon dan stop yang belum terkonfirmasi.
+  - **Shell:** menu tray dibangun ulang dari `runtime-summary` di main thread; **Stop all scripts** memanggil `Sidecar::stop_all`; `tauri-plugin-notification` 2.5.1 menampilkan `script-alert` hanya bila jendela tidak sedang dilihat.
+  - **Screenshot:** `docs/screenshots/d3/capture.mjs` kini juga membuat `group-edit.png` dan `leftover.png`.
 
 ## Verifikasi
 
@@ -183,6 +195,26 @@ OS utama: Windows native, build 10.0.26200, x64
   - **Test font:** browser test memastikan face Libre Caslon Display berstatus `loaded`. Mutation check dengan `font-src` dihapus membuat test gagal dengan status `error`.
   - **Shell desktop:** `npm run desktop:verify` lulus 21/21 setelah `cargo clean`.
   - **Tidak dicakup:** `npm audit` melaporkan satu temuan high pada `source-map-js` (dependensi build Vite, dev-only). Temuan itu sudah ada sebelum perubahan ini dan tidak ditangani di sini.
+- 2026-10-10, Windows native x64, D3.5, Node 24.21.0/npm 11.19.0 portable (diunduh ulang dari nodejs.org, SHA-256 cocok dengan `SHASUMS256.txt`):
+  - **Gate:** `npm run verify:release` lulus penuh:
+    - Toolchain, versi workspace, typecheck, dan lint 132 file.
+    - Unit 68/68, integration 25 plus satu skip POSIX-only, dan browser 4/4. Browser mencakup test baru Check → Mark as stopped serta langkah edit/hapus grup dan reset pengaturan.
+    - Clean setup 206 file (install 3,15 detik, build 6,43 detik).
+    - Packaging reproducible: tarball lokal 4.777.098 byte/3.457 entry, SHA-256 `7f2ed274…`.
+    - SBOM `4deca489…` dan inventaris lisensi `6cc4ba1b…` tidak berubah.
+  - **Test baru:**
+    - Unit `desktop-bridge` (3).
+    - Dua kasus runtime manager (`markStopped`, `forget`) dan satu kasus profile (`changeWhileIdle`).
+    - Integration `desktop-gaps-api` dengan SQLite nyata dan run histori unknown.
+    - Integration sidecar `runtime-summary` → `stop-all` → `runtime-summary` dengan script npm nyata.
+  - **Shell:** `cargo build` tanpa warning dan `cargo fmt --check` lulus. `npm run desktop:verify` lulus 21/21 setelah DevDock milik pengguna ditutup dengan `--quit` atas izinnya.
+  - **Cek manual aplikasi nyata:**
+    - Ikon tray bernama "DevDock · 1 script running" saat satu script berjalan.
+    - Sidecar nyata mengirim `script-alert` "crash stopped with an error" untuk script npm yang exit 1.
+  - **Belum terverifikasi visual:**
+    - Toast Windows, karena notifikasi dimatikan untuk pengguna ini (`ToastNotifier.Setting` = `DisabledForUser`). Pengaturan tidak diubah.
+    - Isi menu tray, karena otomatisasi klik kanan melalui overflow ikon tidak andal. Upaya awal sempat mengenai menu tab browser pengguna; menu itu ditutup dengan Escape tanpa memilih apa pun.
+  - **Catatan:** `npm run test:integration` dengan Node sistem 24.11.1 gagal pada test packed CLI karena `EBADENGINE` (engine-strict). Dengan runtime terpin, test itu lulus.
 - 2026-10-10, Windows native x64, D3 (tree `fb2edba` plus dokumen D3.4):
   - **Gate rilis:** `npm run verify:release` lulus: lint 127 file, 62 unit, 23 integration plus satu skip POSIX-only, 3 browser, clean setup 191 file (install 3,45 detik, build 6,53 detik), dan packaging reproducible. Tarball lokal 4.632.742 byte/3.449 entry, SHA-256 `db22dd04…`; SBOM `4deca489…` dan inventaris lisensi `6cc4ba1b…` tidak berubah.
   - **Shell desktop:** `npm run desktop:verify` lulus 21/21 pemeriksaan, termasuk layar Welcome di jendela desktop, penolakan `open_in_browser` untuk https eksternal/URL berkredensial/`file:`, penolakan `open_folder` untuk executable dan path relatif, serta tombol Open folder di tampilan proyek.
@@ -209,6 +241,8 @@ OS utama: Windows native, build 10.0.26200, x64
 
 ## Belajar
 
+- Latihan opsional D3.5: daftarkan proyek fixture, jalankan script yang terus berjalan, lalu matikan proses daemon secara paksa lewat Task Manager. Buka DevDock lagi, tekan **Check** pada kartunya, dan bandingkan hasil "Process number" sebelum dan sesudah Anda menutup sendiri proses `node` script itu.
+- Pertanyaan pemahaman D3.5: mengapa **Mark as stopped** hanya mencatat keputusan pengguna dan tidak menghentikan PID yang tersimpan? Mengapa grup yang sedang berjalan tidak boleh diedit, padahal konfigurasinya hanya baris JSON di SQLite?
 - Latihan opsional D3: tambahkan script `"preview": "vite preview"` ke proyek yang sudah terdaftar, tekan **Check again** atau buka ulang proyek, lalu bandingkan deskripsinya dengan `dev`. Jalankan keduanya dan perhatikan tab output serta alamat di pojok kartu.
 - Pertanyaan pemahaman D3: mengapa dialog "Add this project?" memakai endpoint terpisah yang tidak menyimpan apa pun, alih-alih langsung mendaftarkan folder lalu menampilkan isinya? Mengapa port yang dikonfigurasi tetap menang bila berbeda dari alamat yang dicetak aplikasi?
 - Runtime Node.js menjalankan daemon dan fixture. npm memasang dependensi dan menjalankan script workspace. Versi keduanya perlu dipin agar hasil setup dapat diulang.
@@ -336,5 +370,5 @@ OS utama: Windows native, build 10.0.26200, x64
 
 ## Berikutnya
 
-- Review tampilan D3 oleh pengguna (`npm run desktop:run` atau screenshot di `docs/screenshots/d3/`), lalu perbaikan sesuai masukan.
+- Review tampilan D3 dan D3.5 oleh pengguna (`npm run desktop:run` atau screenshot di `docs/screenshots/d3/`), termasuk melihat menu tray secara langsung, lalu perbaikan sesuai masukan.
 - D4 packaging: Node dan daemon dibundel, installer NSIS per-user, sinkronisasi versi `Cargo.toml`/`tauri.conf.json`, ikon final, dan workflow CI Windows yang menginstal, meluncurkan, serta menguninstal.

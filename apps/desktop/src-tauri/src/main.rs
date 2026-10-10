@@ -3,16 +3,22 @@
 
 mod sidecar;
 
-use sidecar::Sidecar;
+use sidecar::{RuntimeSummary, Sidecar, SidecarEvent};
 use tauri::ipc::CapabilityBuilder;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{IsMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{
-    AppHandle, Manager, RunEvent, State, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+    AppHandle, Manager, RunEvent, State, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry,
 };
+use tauri_plugin_notification::NotificationExt;
 
 const MAIN_WINDOW: &str = "main";
 const ERROR_WINDOW: &str = "error";
+const TRAY_ID: &str = "devdock";
+/// The tray names at most this many projects; the rest are summed up in one line.
+const TRAY_PROJECT_LINES: usize = 5;
+/// Project names are cut to this many characters so the tray menu stays narrow.
+const TRAY_NAME_CHARS: usize = 40;
 /// Passed to a second launch to stop the running app, for example by an uninstaller.
 const QUIT_ARGUMENT: &str = "--quit";
 
@@ -109,23 +115,120 @@ fn show_error(app: &AppHandle, message: &str) {
     });
 }
 
-fn build_tray(app: &AppHandle) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "Open DevDock", true, None::<&str>)?;
-    let separator = PredefinedMenuItem::separator(app)?;
-    let quit = MenuItem::with_id(
+/// Menu text from a project name: shortened, and on Windows with `&` doubled so it is shown
+/// instead of underlining the next letter.
+fn menu_text(name: &str) -> String {
+    let mut short: String = name.chars().take(TRAY_NAME_CHARS).collect();
+    if name.chars().count() > TRAY_NAME_CHARS {
+        short.push('…');
+    }
+    if cfg!(windows) {
+        short.replace('&', "&&")
+    } else {
+        short
+    }
+}
+
+fn running_text(count: u64) -> String {
+    if count == 1 {
+        "1 script running".into()
+    } else {
+        format!("{count} scripts running")
+    }
+}
+
+/// The tray menu for the current state: what is running, Stop all, and Quit.
+fn tray_menu(app: &AppHandle, summary: &RuntimeSummary) -> tauri::Result<Menu<Wry>> {
+    let mut items: Vec<Box<dyn IsMenuItem<Wry>>> = vec![
+        Box::new(MenuItem::with_id(
+            app,
+            "open",
+            "Open DevDock",
+            true,
+            None::<&str>,
+        )?),
+        Box::new(PredefinedMenuItem::separator(app)?),
+    ];
+    if summary.active == 0 {
+        items.push(Box::new(MenuItem::new(
+            app,
+            "No scripts running",
+            false,
+            None::<&str>,
+        )?));
+    } else {
+        let mut shown = 0;
+        for (name, active) in summary.projects.iter().take(TRAY_PROJECT_LINES) {
+            let line = format!("{}: {}", menu_text(name), running_text(*active));
+            items.push(Box::new(MenuItem::new(app, line, false, None::<&str>)?));
+            shown += active;
+        }
+        let hidden = summary.active.saturating_sub(shown);
+        if hidden > 0 {
+            let line = format!("Other projects: {}", running_text(hidden));
+            items.push(Box::new(MenuItem::new(app, line, false, None::<&str>)?));
+        }
+    }
+    items.push(Box::new(MenuItem::with_id(
+        app,
+        "stop-all",
+        "Stop all scripts",
+        summary.active > 0,
+        None::<&str>,
+    )?));
+    items.push(Box::new(PredefinedMenuItem::separator(app)?));
+    items.push(Box::new(MenuItem::with_id(
         app,
         "quit",
-        "Quit DevDock (stops all services)",
+        "Quit DevDock (stops all scripts)",
         true,
         None::<&str>,
-    )?;
-    let menu = Menu::with_items(app, &[&open, &separator, &quit])?;
-    let mut tray = TrayIconBuilder::with_id("devdock")
+    )?));
+    let references: Vec<&dyn IsMenuItem<Wry>> = items.iter().map(|item| item.as_ref()).collect();
+    Menu::with_items(app, &references)
+}
+
+/// Shows the latest running counts in the tray menu and tooltip.
+fn update_tray(app: &AppHandle, summary: &RuntimeSummary) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return;
+    };
+    if let Ok(menu) = tray_menu(app, summary) {
+        let _ = tray.set_menu(Some(menu));
+    }
+    let tooltip = if summary.active == 0 {
+        "DevDock".to_string()
+    } else {
+        format!("DevDock · {}", running_text(summary.active))
+    };
+    let _ = tray.set_tooltip(Some(tooltip));
+}
+
+/// Tells the user a script failed, unless they are already looking at DevDock.
+fn notify_failure(app: &AppHandle, title: &str, body: &str) {
+    let watching = app.get_webview_window(MAIN_WINDOW).is_some_and(|window| {
+        window.is_visible().unwrap_or(false)
+            && !window.is_minimized().unwrap_or(false)
+            && window.is_focused().unwrap_or(false)
+    });
+    if !watching {
+        let _ = app.notification().builder().title(title).body(body).show();
+    }
+}
+
+fn build_tray(app: &AppHandle) -> tauri::Result<()> {
+    let menu = tray_menu(app, &RuntimeSummary::default())?;
+    let mut tray = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("DevDock")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => show_main_window(app),
+            "stop-all" => {
+                if let Some(sidecar) = app.try_state::<Sidecar>() {
+                    let _ = sidecar.stop_all();
+                }
+            }
             "quit" => app.exit(0),
             _ => {}
         })
@@ -147,8 +250,17 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 }
 
 fn open_dashboard(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    let event_handle = app.clone();
     let exit_handle = app.clone();
-    let (sidecar, ready) = Sidecar::start(move || {
+    let on_event = move |event: SidecarEvent| {
+        // Tray and notification calls belong on the main thread, not the daemon reader thread.
+        let handle = event_handle.clone();
+        let _ = event_handle.run_on_main_thread(move || match event {
+            SidecarEvent::Summary(summary) => update_tray(&handle, &summary),
+            SidecarEvent::Alert { title, body } => notify_failure(&handle, &title, &body),
+        });
+    };
+    let (sidecar, ready) = Sidecar::start(on_event, move || {
         let handle = exit_handle.clone();
         let _ = exit_handle.run_on_main_thread(move || {
             show_error(
@@ -211,6 +323,7 @@ fn main() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             request_pairing_code,
             quit_app,

@@ -7,7 +7,7 @@ import {
   type RunSnapshot,
 } from "@devdock/contracts";
 import { profileStartOrder } from "./profile-graph.js";
-import type { ProjectRegistry } from "./project-registry.js";
+import { type ProjectRegistry, ProjectRegistryError } from "./project-registry.js";
 import type { ServiceRuntimeManager, ServiceStartupResult } from "./service-runtime-manager.js";
 import type {
   StartOutcome,
@@ -80,6 +80,8 @@ export class ProfileRuntimeManager {
   readonly #runtime: ProfileServiceRuntime;
   readonly #operations = new Map<string, ActiveProfileOperation>();
   readonly #leases = new Map<string, ServiceLease>();
+  // Bumped whenever a group's configuration changes, so a start that read the old one retries.
+  readonly #revisions = new Map<string, number>();
   #tail: Promise<void> = Promise.resolve();
   #closed = false;
 
@@ -93,7 +95,9 @@ export class ProfileRuntimeManager {
 
   async start(profileId: string): Promise<ProfileStartOutcome> {
     if (this.#closed) throw new Error("Profile runtime manager is closed");
+    const revision = this.#revisions.get(profileId) ?? 0;
     const profile = await this.#registry.runnableProfile(profileId);
+    if ((this.#revisions.get(profileId) ?? 0) !== revision) return this.start(profileId);
     const existing = this.#operations.get(profileId);
     if (existing !== undefined && (active(existing.snapshot) || this.#hasLease(existing))) {
       return { kind: "existing", snapshot: clone(existing.snapshot) };
@@ -126,6 +130,25 @@ export class ProfileRuntimeManager {
       this.#finishFailure(operation, "PROFILE_START_FAILED");
     });
     return { kind: "started", snapshot: clone(operation.snapshot) };
+  }
+
+  // True while the group is starting, running, stopping, or still holds scripts it started.
+  busy(profileId: string): boolean {
+    const operation = this.#operations.get(profileId);
+    return operation !== undefined && (active(operation.snapshot) || this.#hasLease(operation));
+  }
+
+  // Applies a configuration change (edit or delete) to a group that is not running. The check and
+  // the change happen in the same turn, and the group's last result is dropped because it
+  // described the old members.
+  changeWhileIdle<T>(profileId: string, change: () => T): T {
+    if (this.busy(profileId)) {
+      throw new ProjectRegistryError("PROFILE_ACTIVE", "Stop the group before changing it");
+    }
+    const result = change();
+    this.#operations.delete(profileId);
+    this.#revisions.set(profileId, (this.#revisions.get(profileId) ?? 0) + 1);
+    return result;
   }
 
   async status(profileId: string): Promise<{ snapshot: ProfileOperationSnapshot | null }> {

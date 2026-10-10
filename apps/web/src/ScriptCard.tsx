@@ -45,6 +45,7 @@ export function ScriptCard({
   onStop,
   onOpen,
   onSettings,
+  onCheck,
 }: {
   entry: ScriptEntry;
   state: CardState;
@@ -55,6 +56,7 @@ export function ScriptCard({
   onStop: () => void;
   onOpen: (url: string, event: MouseEvent<HTMLAnchorElement>) => void;
   onSettings: () => void;
+  onCheck: () => void;
 }) {
   const description = [entry.hint.description, kindText(entry.hint)].filter(Boolean).join(" · ");
   const classes = ["card"];
@@ -116,6 +118,16 @@ export function ScriptCard({
                 {busy === "stop" ? "Stopping…" : "Stop"}
               </button>
             </>
+          ) : state.tone === "unknown" ? (
+            <button
+              className="btn secondary"
+              type="button"
+              onClick={onCheck}
+              aria-label={`Check whether ${entry.title} is still running`}
+            >
+              <Icon name="help" />
+              Check
+            </button>
           ) : (
             <button
               className={recommended && !state.hasRun ? "btn primary" : "btn secondary"}

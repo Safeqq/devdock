@@ -8,7 +8,9 @@ import {
   resolveDataDirectory,
 } from "@devdock/platform";
 import { InstanceLock, InstanceLockError, RegistryDatabase } from "@devdock/storage";
+import { DesktopBridge } from "./desktop-bridge.js";
 import { createLocalApiServer } from "./local-api.js";
+import { ProfileRuntimeManager } from "./profile-runtime-manager.js";
 import { ProjectRegistry } from "./project-registry.js";
 import { ServiceRuntimeManager } from "./service-runtime-manager.js";
 
@@ -26,9 +28,14 @@ function isControlMessage(message: unknown, type: string): boolean {
 }
 
 // A parent such as the desktop shell owns this process through its stdin pipe. It can request
-// shutdown or a fresh pairing code with JSON lines, and when the pipe closes because the parent
-// exited or crashed, the daemon shuts down instead of being left holding services.
-function listenForParentControl(close: () => void, issuePairingCode: () => string): void {
+// shutdown, a fresh pairing code, or stopping every script with JSON lines, and when the pipe
+// closes because the parent exited or crashed, the daemon shuts down instead of being left
+// holding services.
+function listenForParentControl(
+  close: () => void,
+  issuePairingCode: () => string,
+  stopAll: () => void,
+): void {
   const lines = createInterface({ input: process.stdin, crlfDelay: Number.POSITIVE_INFINITY });
   lines.on("line", (line) => {
     if (line.length > CONTROL_LINE_LIMIT) return;
@@ -41,7 +48,7 @@ function listenForParentControl(close: () => void, issuePairingCode: () => strin
     if (isControlMessage(message, "shutdown")) close();
     else if (isControlMessage(message, "issue-pairing-code")) {
       writeEvent({ type: "pairing-code", pairingCode: issuePairingCode() });
-    }
+    } else if (isControlMessage(message, "stop-all")) stopAll();
   });
   lines.once("close", close);
 }
@@ -83,13 +90,15 @@ async function main(): Promise<void> {
           adapterFactory: () => createPlatformProcessAdapter(),
         })
       : undefined;
+    const profileRuntime =
+      runtime === undefined ? undefined : new ProfileRuntimeManager({ registry, runtime });
     const require = createRequire(import.meta.url);
     const webRoot = join(dirname(require.resolve("@devdock/web/package.json")), "dist");
     api = createLocalApiServer({
       registry,
       launcher,
       webRoot,
-      ...(runtime === undefined ? {} : { runtime }),
+      ...(runtime === undefined || profileRuntime === undefined ? {} : { runtime, profileRuntime }),
     });
     const origin = await api.listen(port);
     writeEvent({
@@ -98,10 +107,18 @@ async function main(): Promise<void> {
       pairingCode: api.pairingCode,
       projectNode: { source: launcher.nodeSource, executable: launcher.nodeExecutable },
     });
+    // Only a desktop parent shows tray counts and notifications, so only it receives them.
+    const bridge =
+      process.env.DEVDOCK_CONTROL === "stdin" &&
+      runtime !== undefined &&
+      profileRuntime !== undefined
+        ? new DesktopBridge({ registry, runtime, profileRuntime, emit: writeEvent })
+        : undefined;
     let closing = false;
     const close = () => {
       if (closing || api === undefined) return;
       closing = true;
+      bridge?.close();
       const runningApi = api;
       void (async () => {
         try {
@@ -128,7 +145,13 @@ async function main(): Promise<void> {
     });
     if (process.env.DEVDOCK_CONTROL === "stdin") {
       const runningApi = api;
-      listenForParentControl(close, () => runningApi.issuePairingCode());
+      listenForParentControl(
+        close,
+        () => runningApi.issuePairingCode(),
+        () => {
+          if (!closing) void bridge?.stopAll();
+        },
+      );
     }
   } catch (caught) {
     try {

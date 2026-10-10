@@ -393,6 +393,11 @@ export const CreateProfileRequestSchema = z.strictObject({
   services: ProfileServicesSchema,
 });
 
+// Editing a group replaces its name and members, validated exactly like a new group.
+export const UpdateProfileRequestSchema = CreateProfileRequestSchema;
+
+export const DeletedResponseSchema = z.strictObject({ id: identifier });
+
 export const SessionResponseSchema = z.strictObject({
   csrfToken: z.string().min(32),
   expiresAt: z.iso.datetime({ offset: true }),
@@ -450,6 +455,21 @@ export const ServiceDiagnosticsResponseSchema = z.strictObject({
 export type ServiceDiagnosticsResponse = z.infer<typeof ServiceDiagnosticsResponseSchema>;
 
 export const ServiceActionRequestSchema = z.strictObject({});
+
+// Hints for a run whose ownership is unknown after DevDock restarted. A process ID can be reused
+// by an unrelated program and a busy port proves nothing about who holds it, so these only help
+// the user decide; DevDock never stops or adopts anything because of them.
+export const ServiceLeftoverResponseSchema = z.strictObject({
+  pid: z.number().int().positive().nullable(),
+  // Whether some process currently has that ID; null when there is no ID or it can't be checked.
+  processRunning: z.boolean().nullable(),
+  port: PortDiagnosticSchema,
+  // False while this DevDock session still holds the run; Stop is the way out then.
+  canMarkStopped: z.boolean(),
+});
+export type ServiceLeftover = z.infer<typeof ServiceLeftoverResponseSchema>;
+
+export const RunSnapshotResponseSchema = z.strictObject({ snapshot: RunSnapshotSchema });
 
 export const ServiceRuntimeStatusResponseSchema = z.strictObject({
   snapshot: RunSnapshotSchema.nullable(),

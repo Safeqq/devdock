@@ -1429,3 +1429,10 @@ input[type="checkbox"] {
     border-top: 1px solid var(--hair);
   }
 }
+.confirm-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}

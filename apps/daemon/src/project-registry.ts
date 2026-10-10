@@ -43,10 +43,14 @@ export class ProjectRegistryError extends Error {
       | "SCRIPT_NAME_INVALID"
       | "SERVICE_CONFIG_INVALID"
       | "SERVICE_NOT_FOUND"
+      | "SERVICE_ACTIVE"
+      | "SERVICE_IN_GROUP"
+      | "RUN_NOT_UNKNOWN"
       | "SERVICE_ENV_FILE_UNAVAILABLE"
       | "SERVICE_ENV_KEY_MISSING"
       | "OPEN_APP_PORT_UNCONFIGURED"
       | "PROFILE_NOT_FOUND"
+      | "PROFILE_ACTIVE"
       | "PROFILE_CONFIG_INVALID"
       | "PROFILE_SERVICE_INVALID"
       | "PROFILE_CYCLE",
@@ -202,9 +206,63 @@ export class ProjectRegistry {
     displayName: string,
     services: readonly ProfileService[],
   ): Promise<ProfileConfig> {
+    return this.#store.insertProfile(
+      await this.#validatedProfile(randomUUID(), projectId, displayName, services),
+    );
+  }
+
+  // Validates a group's new name and members like a new group. The caller makes sure the group
+  // is not running, so a running operation never sees its members change underneath it.
+  async validateProfileUpdate(
+    profileId: string,
+    displayName: string,
+    services: readonly ProfileService[],
+  ): Promise<ProfileConfig> {
+    const current = this.getProfile(profileId);
+    return this.#validatedProfile(profileId, current.projectId, displayName, services);
+  }
+
+  saveProfile(profile: ProfileConfig): ProfileConfig {
+    const saved = this.#store.updateProfile(profile);
+    if (saved === null) {
+      throw new ProjectRegistryError("PROFILE_NOT_FOUND", "Profile does not exist");
+    }
+    return saved;
+  }
+
+  deleteProfile(profileId: string): void {
+    if (!this.#store.deleteProfile(profileId)) {
+      throw new ProjectRegistryError("PROFILE_NOT_FOUND", "Profile does not exist");
+    }
+  }
+
+  // Forgets a service's settings and run history. The caller makes sure no run is active; a
+  // service that a group still starts must be removed from that group first.
+  deleteService(serviceId: string): void {
+    const service = this.getService(serviceId);
+    const groups = this.#store
+      .listProfiles(service.projectId)
+      .filter((profile) => profile.services.some((member) => member.serviceId === serviceId));
+    if (groups.length > 0) {
+      throw new ProjectRegistryError(
+        "SERVICE_IN_GROUP",
+        `Service is part of: ${groups.map((profile) => profile.displayName).join(", ")}`,
+      );
+    }
+    if (!this.#store.deleteService(serviceId)) {
+      throw new ProjectRegistryError("SERVICE_NOT_FOUND", "Service does not exist");
+    }
+  }
+
+  async #validatedProfile(
+    id: string,
+    projectId: string,
+    displayName: string,
+    services: readonly ProfileService[],
+  ): Promise<ProfileConfig> {
     await this.#activeProject(projectId);
     const parsed = ProfileConfigSchema.safeParse({
-      id: randomUUID(),
+      id,
       projectId,
       displayName,
       services,
@@ -233,7 +291,7 @@ export class ProjectRegistry {
         `Profile dependency cycle: ${cycle.join(" -> ")}`,
       );
     }
-    return this.#store.insertProfile(parsed.data);
+    return parsed.data;
   }
 
   async runnableProfile(id: string): Promise<ProfileConfig> {

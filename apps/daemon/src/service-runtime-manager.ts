@@ -7,7 +7,7 @@ import {
   type ReadinessProbeResult,
   type ReadinessProbeTarget,
 } from "@devdock/platform";
-import type { ProjectRegistry } from "./project-registry.js";
+import { type ProjectRegistry, ProjectRegistryError } from "./project-registry.js";
 import { RunLogBuffer } from "./run-log-buffer.js";
 import {
   SingleServiceSupervisor,
@@ -108,10 +108,13 @@ export class ServiceRuntimeManager {
   readonly #tails = new Map<string, Promise<void>>();
   readonly #logBuffers = new Map<string, RunLogBuffer>();
   readonly #logOrder: string[] = [];
+  // Which service each retained log belongs to, so forgetting a service drops its logs too.
+  readonly #logServices = new Map<string, string>();
   readonly #readinessProbes = new Map<string, ActiveReadinessProbe>();
   readonly #pendingRestarts = new Map<string, PendingRestart>();
   readonly #restartAttempts = new Map<string, number>();
   readonly #snapshotSubscribers = new Map<string, Set<(snapshot: RunSnapshot) => void>>();
+  readonly #allSubscribers = new Set<(snapshot: RunSnapshot) => void>();
   #closed = false;
 
   constructor(options: ServiceRuntimeManagerOptions) {
@@ -166,7 +169,7 @@ export class ServiceRuntimeManager {
 
     const outcome = await runtime.supervisor.start();
     if (outcome.kind === "started" || outcome.kind === "existing") {
-      this.#capture(runtime, outcome.snapshot.runId);
+      this.#capture(serviceId, runtime, outcome.snapshot.runId);
     }
     if (outcome.kind === "started" && service.readiness !== undefined) {
       const checking = await runtime.supervisor.setReadiness(outcome.snapshot.runId, "checking");
@@ -210,6 +213,69 @@ export class ServiceRuntimeManager {
       this.#evictLogs();
       return outcome;
     });
+  }
+
+  // True while this daemon session holds a supervisor for the service, so its runs are its own.
+  holds(serviceId: string): boolean {
+    return this.#runtimes.has(serviceId);
+  }
+
+  // Records that the user confirmed a run left over from an earlier DevDock session is gone. Only
+  // history from an earlier session qualifies: a run this session still holds is stopped with
+  // Stop, which can prove it. Nothing is signalled or killed here.
+  markStopped(serviceId: string): Promise<RunSnapshot> {
+    return this.#serialize(serviceId, async () => {
+      const snapshot = this.#runtimes.has(serviceId) ? null : this.#historicalSnapshot(serviceId);
+      if (snapshot === null || snapshot.reconciliationState !== "unknown") {
+        throw new ProjectRegistryError(
+          "RUN_NOT_UNKNOWN",
+          "Only a run left over from an earlier DevDock session can be marked as stopped",
+        );
+      }
+      const stopped: RunSnapshot = {
+        ...snapshot,
+        processState: "stopped",
+        readinessState: "unknown",
+        reconciliationState: "known",
+        endedAt: snapshot.endedAt ?? new Date().toISOString(),
+        failureReason: "MARKED_STOPPED_BY_USER",
+      };
+      this.#persist(stopped);
+      return stopped;
+    });
+  }
+
+  // Forgets a service's settings, run history, and retained logs. Refused while a run is active
+  // or its ownership is unknown, so nothing DevDock may still own loses its record.
+  forget(serviceId: string): Promise<void> {
+    return this.#serialize(serviceId, async () => {
+      const runtime = this.#runtimes.get(serviceId);
+      const snapshot =
+        runtime === undefined ? this.#historicalSnapshot(serviceId) : runtime.supervisor.snapshot();
+      if (!replaceable(snapshot)) {
+        throw new ProjectRegistryError(
+          "SERVICE_ACTIVE",
+          "Stop the service, or resolve its unknown status, before removing it",
+        );
+      }
+      this.#registry.deleteService(serviceId);
+      this.#cancelPendingRestart(serviceId);
+      this.#restartAttempts.delete(serviceId);
+      this.#cancelReadinessProbe(serviceId);
+      this.#runtimes.delete(serviceId);
+      for (const [runId, owner] of this.#logServices) {
+        if (owner === serviceId) this.#dropLogs(runId);
+      }
+    });
+  }
+
+  // Observes every service's snapshots, for summaries that span all projects.
+  subscribeAll(listener: (snapshot: RunSnapshot) => void): () => void {
+    if (this.#closed) throw new Error("Service runtime manager is closed");
+    this.#allSubscribers.add(listener);
+    return () => {
+      this.#allSubscribers.delete(listener);
+    };
   }
 
   subscribe(serviceId: string, listener: (snapshot: RunSnapshot) => void): () => void {
@@ -302,17 +368,20 @@ export class ServiceRuntimeManager {
     );
     for (const logs of this.#logBuffers.values()) logs.dispose();
     this.#logBuffers.clear();
+    this.#logServices.clear();
     this.#logOrder.length = 0;
     this.#snapshotSubscribers.clear();
+    this.#allSubscribers.clear();
   }
 
-  #capture(runtime: ManagedServiceRuntime, runId: string): void {
+  #capture(serviceId: string, runtime: ManagedServiceRuntime, runId: string): void {
     if (this.#logBuffers.has(runId)) return;
     const streams = runtime.supervisor.streamsFor(runId);
     if (streams === null) throw new Error("Managed run streams are unavailable");
     const logs = new RunLogBuffer(this.#daemonSessionId, runId);
     logs.capture(streams.stdout, streams.stderr);
     this.#logBuffers.set(runId, logs);
+    this.#logServices.set(runId, serviceId);
     this.#logOrder.push(runId);
     this.#evictLogs();
   }
@@ -321,11 +390,14 @@ export class ServiceRuntimeManager {
     try {
       this.#registry.saveRunSnapshot(snapshot);
     } finally {
-      for (const subscriber of this.#snapshotSubscribers.get(snapshot.serviceId) ?? []) {
+      for (const subscriber of [
+        ...(this.#snapshotSubscribers.get(snapshot.serviceId) ?? []),
+        ...this.#allSubscribers,
+      ]) {
         try {
           subscriber({ ...snapshot });
         } catch {
-          // A profile observer cannot interrupt lifecycle persistence or another observer.
+          // An observer cannot interrupt lifecycle persistence or another observer.
         }
       }
     }
@@ -495,12 +567,17 @@ export class ServiceRuntimeManager {
     while (this.#logBuffers.size > MAX_RETAINED_RUN_LOGS) {
       const index = this.#logOrder.findIndex((runId) => !active.has(runId));
       if (index === -1) return;
-      const [runId] = this.#logOrder.splice(index, 1);
-      if (runId !== undefined) {
-        this.#logBuffers.get(runId)?.dispose();
-        this.#logBuffers.delete(runId);
-      }
+      const runId = this.#logOrder[index];
+      if (runId !== undefined) this.#dropLogs(runId);
     }
+  }
+
+  #dropLogs(runId: string): void {
+    const index = this.#logOrder.indexOf(runId);
+    if (index !== -1) this.#logOrder.splice(index, 1);
+    this.#logBuffers.get(runId)?.dispose();
+    this.#logBuffers.delete(runId);
+    this.#logServices.delete(runId);
   }
 
   #serialize<T>(serviceId: string, operation: () => Promise<T>): Promise<T> {

@@ -143,14 +143,40 @@ try {
   await dialog.locator("label.pick").filter({ hasText: "dev" }).locator("input").check();
   await delay(200);
   await shot("group");
-  await page.keyboard.press("Escape");
-
+  await dialog.getByRole("button", { name: "Create group" }).click();
   await page.getByRole("button", { name: "Stop dev" }).click();
   await page.getByText("Not running", { exact: true }).first().waitFor();
+
+  await page.getByRole("button", { name: "Edit group: Full stack" }).click();
+  await page.getByRole("dialog", { name: "Edit group" }).waitFor();
+  await delay(200);
+  await shot("group-edit");
+  await page.keyboard.press("Escape");
+
+  // A run that was active when an earlier DevDock session ended, as after a crash. The capture
+  // script's own process ID stands in for a program that may still be running.
+  const projectId = registry.listProjects()[0].id;
+  const lint = await registry.selectService(projectId, "lint");
+  registry.saveRunSnapshot({
+    runId: "0d3f6a52-91c4-4f0e-8a3b-6c2a1e9b7f40",
+    serviceId: lint.id,
+    processState: "running",
+    readinessState: "unknown",
+    reconciliationState: "known",
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+  });
+  await page.reload();
+  await page.getByText("Status unknown").waitFor();
+  await page.getByRole("button", { name: "Check whether lint is still running" }).click();
+  await page.getByRole("list", { name: "What DevDock can see" }).waitFor();
+  await delay(200);
+  await shot("leftover");
+  await page.keyboard.press("Escape");
 } finally {
   await browser.close();
   await api.close();
   store.close();
   await rm(root, { recursive: true, force: true });
 }
-console.log("captured welcome, add, first, project, settings, and group");
+console.log("captured welcome, add, first, project, settings, group, group-edit, and leftover");

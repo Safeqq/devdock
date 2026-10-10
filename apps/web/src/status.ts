@@ -101,7 +101,10 @@ export function cardState(
       tone: "unknown",
       canStart: false,
       hasRun: true,
-      why: "DevDock restarted while this was running, so it can't tell whether it still is. If it is, close it yourself; DevDock won't start a second copy.",
+      why:
+        snapshot.failureReason === "DAEMON_RESTART_OWNERSHIP_UNKNOWN"
+          ? "DevDock restarted while this was running, so it can't tell whether it still is. Press Check to see what's left before starting it again."
+          : "DevDock couldn't confirm that this stopped. Press Check to see what's left.",
     };
   }
   const url = appAddress(service, status);

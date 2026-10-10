@@ -18,6 +18,7 @@ import {
   apiPost,
   type Discovery,
   friendlyError,
+  type Profile,
   type ProfileOperationSnapshot,
   type Project,
   type ProjectDetail,
@@ -29,8 +30,9 @@ import {
 import { Dialog } from "./Dialog";
 import { isDesktop, openFolder, openInBrowser } from "./desktop";
 import { GroupCard } from "./GroupCard";
+import { GroupDialog } from "./GroupDialog";
 import { Icon } from "./icons";
-import { NewGroupDialog } from "./NewGroupDialog";
+import { LeftoverDialog } from "./LeftoverDialog";
 import { OutputPanel, type OutputTab } from "./OutputPanel";
 import { ScriptCard, type ScriptEntry } from "./ScriptCard";
 import { ScriptSettings } from "./ScriptSettings";
@@ -157,6 +159,8 @@ export function ProjectView({
   const [outputId, setOutputId] = useState<string | null>(null);
   const [settingsKey, setSettingsKey] = useState<string | null>(null);
   const [creatingGroup, setCreatingGroup] = useState(false);
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [checkKey, setCheckKey] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -347,6 +351,39 @@ export function ProjectView({
               : [...current.services, service],
           },
     );
+  }
+
+  function forgetService(serviceId: string) {
+    setDetail((current) =>
+      current === null
+        ? current
+        : { ...current, services: current.services.filter((entry) => entry.id !== serviceId) },
+    );
+    setStatuses(({ [serviceId]: _forgotten, ...rest }) => rest);
+  }
+
+  function saveGroup(profile: Profile) {
+    setDetail((current) =>
+      current === null
+        ? current
+        : {
+            ...current,
+            profiles: current.profiles.some((entry) => entry.id === profile.id)
+              ? current.profiles.map((entry) => (entry.id === profile.id ? profile : entry))
+              : [...current.profiles, profile],
+          },
+    );
+    setGroups((current) => ({ ...current, [profile.id]: null }));
+    setPollNow((value) => value + 1);
+  }
+
+  function deleteGroup(profileId: string) {
+    setDetail((current) =>
+      current === null
+        ? current
+        : { ...current, profiles: current.profiles.filter((entry) => entry.id !== profileId) },
+    );
+    setGroups(({ [profileId]: _deleted, ...rest }) => rest);
   }
 
   async function ensureService(entry: ScriptEntry): Promise<Service> {
@@ -567,6 +604,8 @@ export function ProjectView({
     (entry) => entry.service === null || (statuses[entry.service.id]?.snapshot ?? null) === null,
   );
   const settingsEntry = allEntries.find((entry) => entry.key === settingsKey) ?? null;
+  const checkEntry = allEntries.find((entry) => entry.key === checkKey) ?? null;
+  const editingGroup = detail.profiles.find((profile) => profile.id === editingGroupId) ?? null;
   const stopCount = activeEntries.length;
 
   const card = (entry: ScriptEntry) => (
@@ -581,6 +620,7 @@ export function ProjectView({
       onStop={() => void stop(entry)}
       onOpen={open}
       onSettings={() => setSettingsKey(entry.key)}
+      onCheck={() => setCheckKey(entry.key)}
     />
   );
 
@@ -805,6 +845,7 @@ export function ProjectView({
                     busy={groupBusy[profile.id] === true || !canRun}
                     onStart={() => void groupAction(profile.id, "start")}
                     onStop={() => void groupAction(profile.id, "stop")}
+                    onEdit={() => setEditingGroupId(profile.id)}
                   />
                 ))}
               </div>
@@ -822,6 +863,11 @@ export function ProjectView({
           projectPath={detail.project.path.displayPath}
           system={system}
           running={states.get(settingsEntry.key)?.active === true}
+          groups={detail.profiles
+            .filter((profile) =>
+              profile.services.some((member) => member.serviceId === settingsEntry.service?.id),
+            )
+            .map((profile) => profile.displayName)}
           csrfToken={csrfToken}
           onClose={() => setSettingsKey(null)}
           onSaved={(service) => {
@@ -833,26 +879,95 @@ export function ProjectView({
               code: null,
             });
           }}
+          onForgotten={(serviceId) => {
+            forgetService(serviceId);
+            setSettingsKey(null);
+            setNotice({
+              tone: "info",
+              text:
+                settingsEntry.command === null
+                  ? `Removed ${settingsEntry.title}.`
+                  : `${settingsEntry.title} is back to its default settings.`,
+              code: null,
+            });
+          }}
           onUnauthorized={onUnauthorized}
         />
       )}
       {creatingGroup ? (
-        <NewGroupDialog
+        <GroupDialog
           entries={main}
           projectId={project.id}
           csrfToken={csrfToken}
           ensureService={ensureService}
           onClose={() => setCreatingGroup(false)}
-          onCreated={(profile) => {
+          onSaved={(profile) => {
             setCreatingGroup(false);
-            setDetail((current) =>
-              current === null ? current : { ...current, profiles: [...current.profiles, profile] },
-            );
-            setPollNow((value) => value + 1);
+            saveGroup(profile);
           }}
           onUnauthorized={onUnauthorized}
         />
       ) : null}
+      {editingGroup === null ? null : (
+        <GroupDialog
+          key={editingGroup.id}
+          entries={main}
+          projectId={project.id}
+          profile={editingGroup}
+          csrfToken={csrfToken}
+          ensureService={ensureService}
+          onClose={() => setEditingGroupId(null)}
+          onSaved={(profile) => {
+            setEditingGroupId(null);
+            saveGroup(profile);
+            setNotice({
+              tone: "info",
+              text: `Saved the group ${profile.displayName}.`,
+              code: null,
+            });
+          }}
+          onDeleted={(profileId) => {
+            setEditingGroupId(null);
+            deleteGroup(profileId);
+            setNotice({
+              tone: "info",
+              text: `Deleted the group ${editingGroup.displayName}.`,
+              code: null,
+            });
+          }}
+          onUnauthorized={onUnauthorized}
+        />
+      )}
+      {checkEntry?.service == null ? null : (
+        <LeftoverDialog
+          title={checkEntry.title}
+          service={checkEntry.service}
+          csrfToken={csrfToken}
+          onClose={() => setCheckKey(null)}
+          onMarkedStopped={(snapshot) => {
+            const service = checkEntry.service;
+            setCheckKey(null);
+            if (service !== null) {
+              setStatuses((current) => ({
+                ...current,
+                [service.id]: { snapshot, ownership: null, appUrl: null },
+              }));
+            }
+            setNotice({
+              tone: "info",
+              text: `${checkEntry.title} is marked as stopped. You can start it again.`,
+              code: null,
+            });
+            onActivity();
+            setPollNow((value) => value + 1);
+          }}
+          onStopAgain={() => {
+            setCheckKey(null);
+            void stop(checkEntry);
+          }}
+          onUnauthorized={onUnauthorized}
+        />
+      )}
       {confirmRemove ? (
         <Dialog onClose={() => setConfirmRemove(false)} labelledBy="remove-title">
           <div className="dialog-form">

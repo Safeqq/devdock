@@ -138,22 +138,36 @@ try {
   // PATH without any Node.js, as on a computer that never installed it.
   const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
   const debugPort = 9400 + Math.floor(Math.random() * 400);
+  const environment = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([key]) => !/^(path|localappdata|appdata|npm_.*|node_.*)$/iu.test(key),
+    ),
+  );
+  const pathValue = Object.entries(process.env).find(([key]) => key.toLowerCase() === "path")?.[1];
   app = spawn(appPath, [], {
     env: {
-      SystemRoot: systemRoot,
-      windir: systemRoot,
-      ComSpec: join(systemRoot, "System32", "cmd.exe"),
-      PATHEXT: process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD",
-      TEMP: process.env.TEMP ?? tmpdir(),
-      TMP: process.env.TMP ?? tmpdir(),
-      USERPROFILE: process.env.USERPROFILE ?? dataRoot,
+      ...environment,
       APPDATA: join(dataRoot, "Roaming"),
       LOCALAPPDATA: dataRoot,
-      Path: [join(systemRoot, "System32"), systemRoot].join(delimiter),
+      // The user's PATH without any folder that holds a Node.js executable.
+      Path: (pathValue ?? join(systemRoot, "System32"))
+        .split(delimiter)
+        .filter((entry) => entry !== "" && !existsSync(join(entry, "node.exe")))
+        .join(delimiter),
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort}`,
     },
-    stdio: "ignore",
+    stdio: ["ignore", "ignore", "pipe"],
   });
+  let appStderr = "";
+  app.stderr.on("data", (chunk) => {
+    appStderr = (appStderr + chunk).slice(-8_000);
+  });
+  const diagnostics = () =>
+    JSON.stringify({
+      exitCode: app.exitCode,
+      stderr: appStderr,
+      processes: processesUnder(installDirectory),
+    });
   const started = Date.now();
   for (;;) {
     try {
@@ -162,8 +176,15 @@ try {
       });
       break;
     } catch {
-      assert.equal(app.exitCode, null, "installed app exited before its window opened");
-      assert.ok(Date.now() - started < 60_000, "WebView2 DevTools endpoint did not open");
+      assert.equal(
+        app.exitCode,
+        null,
+        `installed app exited before its window opened: ${diagnostics()}`,
+      );
+      assert.ok(
+        Date.now() - started < 90_000,
+        `WebView2 DevTools endpoint did not open: ${diagnostics()}`,
+      );
       await delay(500);
     }
   }

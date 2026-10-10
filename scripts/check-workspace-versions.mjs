@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readDesktopVersions } from "./desktop-version-files.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 
@@ -152,9 +153,20 @@ if (rootManifest === undefined) {
     }
   }
 
+  const desktopFiles = readDesktopVersions(repositoryRoot);
+  for (const entry of desktopFiles) {
+    if (entry.error !== undefined) errors.push(`${entry.label}: ${entry.error}`);
+    else if (entry.version !== expectedVersion) {
+      errors.push(
+        `${entry.label}: version must match root ${JSON.stringify(expectedVersion)}, found ${JSON.stringify(entry.version)}`,
+      );
+    }
+  }
+
   if (errors.length === 0) {
+    const desktop = desktopFiles.length === 0 ? "" : `, and ${desktopFiles.length} desktop files`;
     console.log(
-      `Workspace versions OK: ${manifests.length} manifests and package-lock.json use ${expectedVersion}`,
+      `Workspace versions OK: ${manifests.length} manifests, package-lock.json${desktop} use ${expectedVersion}`,
     );
   }
 }

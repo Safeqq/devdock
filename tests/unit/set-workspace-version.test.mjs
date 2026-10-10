@@ -37,6 +37,10 @@ test("release version update previews safely and writes metadata, changelog, and
         join(sourceRoot, "scripts", "set-workspace-version.mjs"),
         join(root, "scripts", "set-workspace-version.mjs"),
       ),
+      copyFile(
+        join(sourceRoot, "scripts", "desktop-version-files.mjs"),
+        join(root, "scripts", "desktop-version-files.mjs"),
+      ),
       writeFile(
         join(root, "package.json"),
         json({
@@ -159,7 +163,7 @@ test("release version update previews safely and writes metadata, changelog, and
 
     const check = runScript(root, "check-workspace-versions.mjs", []);
     assert.equal(check.status, 0, check.stderr);
-    assert.match(check.stdout, /3 manifests and package-lock\.json use 1\.2\.3-rc\.1/u);
+    assert.match(check.stdout, /3 manifests, package-lock\.json use 1\.2\.3-rc\.1/u);
 
     const emptyUnreleased = runScript(root, "set-workspace-version.mjs", [
       "1.2.4",
@@ -171,6 +175,116 @@ test("release version update previews safely and writes metadata, changelog, and
     assert.equal(
       JSON.parse(await readFile(join(root, "package.json"), "utf8")).version,
       "1.2.3-rc.1",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+test("release version update keeps the desktop crate and Tauri config in step", async () => {
+  const root = await mkdtemp(join(tmpdir(), "devdock version desktop-"));
+  const crate = join(root, "apps", "desktop", "src-tauri");
+  const cargoToml = [
+    "[package]",
+    'name = "devdock-desktop"',
+    'version = "0.0.0"',
+    'edition = "2021"',
+    "",
+    "[dependencies]",
+    'serde_json = { version = "1" }',
+    "",
+  ].join("\n");
+  const cargoLock = [
+    "version = 4",
+    "",
+    "[[package]]",
+    'name = "serde_json"',
+    'version = "1.0.0"',
+    "",
+    "[[package]]",
+    'name = "devdock-desktop"',
+    'version = "0.0.0"',
+    "dependencies = [",
+    ' "serde_json",',
+    "]",
+    "",
+  ].join("\n");
+  const tauriConf = [
+    "{",
+    '  "productName": "DevDock",',
+    '  "version": "0.0.0",',
+    '  "bundle": { "targets": ["nsis"], "windows": { "nsis": { "version": "keep" } } }',
+    "}",
+    "",
+  ].join("\n");
+  try {
+    await Promise.all([mkdir(join(root, "scripts")), mkdir(crate, { recursive: true })]);
+    await Promise.all([
+      ...[
+        "check-workspace-versions.mjs",
+        "set-workspace-version.mjs",
+        "desktop-version-files.mjs",
+      ].map((script) =>
+        copyFile(join(sourceRoot, "scripts", script), join(root, "scripts", script)),
+      ),
+      writeFile(
+        join(root, "package.json"),
+        json({ name: "devdock", version: "0.0.0", private: true, workspaces: ["apps/*"] }),
+      ),
+      writeFile(
+        join(root, "package-lock.json"),
+        json({
+          name: "devdock",
+          version: "0.0.0",
+          lockfileVersion: 3,
+          packages: { "": { name: "devdock", version: "0.0.0" } },
+        }),
+      ),
+      writeFile(join(root, "CHANGELOG.md"), "# Changelog\n\n## Unreleased\n\n- Desktop.\n"),
+      writeFile(join(crate, "Cargo.toml"), cargoToml),
+      writeFile(join(crate, "Cargo.lock"), cargoLock),
+      writeFile(join(crate, "tauri.conf.json"), tauriConf),
+    ]);
+
+    const preview = runScript(root, "set-workspace-version.mjs", ["0.2.0", "--date", "2030-01-01"]);
+    assert.equal(preview.status, 0, preview.stderr);
+    for (const file of ["Cargo.toml", "Cargo.lock", "tauri.conf.json"]) {
+      assert.ok(preview.stdout.includes(`apps/desktop/src-tauri/${file}`), file);
+    }
+
+    const write = runScript(root, "set-workspace-version.mjs", [
+      "0.2.0",
+      "--date",
+      "2030-01-01",
+      "--write",
+    ]);
+    assert.equal(write.status, 0, write.stderr);
+    // Only the release version changes; formatting and other versions stay as written.
+    assert.equal(
+      await readFile(join(crate, "Cargo.toml"), "utf8"),
+      cargoToml.replace('version = "0.0.0"', 'version = "0.2.0"'),
+    );
+    assert.equal(
+      await readFile(join(crate, "Cargo.lock"), "utf8"),
+      cargoLock.replace(
+        'name = "devdock-desktop"\nversion = "0.0.0"',
+        'name = "devdock-desktop"\nversion = "0.2.0"',
+      ),
+    );
+    assert.equal(
+      await readFile(join(crate, "tauri.conf.json"), "utf8"),
+      tauriConf.replace('"version": "0.0.0"', '"version": "0.2.0"'),
+    );
+    const check = runScript(root, "check-workspace-versions.mjs", []);
+    assert.equal(check.status, 0, check.stderr);
+    assert.ok(check.stdout.includes("and 3 desktop files use 0.2.0"), check.stdout);
+
+    await writeFile(join(crate, "tauri.conf.json"), tauriConf.replace("0.0.0", "0.1.9"));
+    const drift = runScript(root, "check-workspace-versions.mjs", []);
+    assert.equal(drift.status, 1);
+    assert.ok(
+      drift.stderr.includes('tauri.conf.json: version must match root "0.2.0", found "0.1.9"'),
+      drift.stderr,
     );
   } finally {
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });

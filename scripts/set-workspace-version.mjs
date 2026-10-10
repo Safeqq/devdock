@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { desktopVersionChanges } from "./desktop-version-files.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const versionCheckPath = fileURLToPath(new URL("./check-workspace-versions.mjs", import.meta.url));
@@ -228,6 +229,7 @@ async function main() {
     original: record.original,
     next: serializeJson(record.value),
   }));
+  changes.push(...desktopVersionChanges(repositoryRoot, currentVersion, options.version));
   const readmePath = join(repositoryRoot, "README.md");
   if (existsSync(readmePath)) {
     const original = readFileSync(readmePath, "utf8");

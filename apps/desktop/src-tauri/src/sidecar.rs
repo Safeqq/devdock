@@ -137,6 +137,7 @@ impl Sidecar {
         let mut child = command
             .spawn()
             .map_err(|error| format!("Could not start the DevDock engine: {error}"))?;
+        crate::startup_log::note(format!("engine process {}", child.id()));
         let stdout = child
             .stdout
             .take()

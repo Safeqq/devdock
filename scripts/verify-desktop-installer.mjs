@@ -14,7 +14,7 @@
 // Without a path it checks the installer `npm run desktop:bundle` built for the current version.
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -113,7 +113,9 @@ const realDefault = join(
 );
 assert.equal(existsSync(realDefault), false, `DevDock is installed for this user: ${realDefault}`);
 
-const workRoot = await mkdtemp(join(tmpdir(), "devdock installer check-"));
+// The long form of the temporary folder: a runner's TEMP can use 8.3 short names (RUNNER~1),
+// which would not match the long paths Windows reports for the processes started from it.
+const workRoot = realpathSync.native(await mkdtemp(join(tmpdir(), "devdock installer check-")));
 const dataRoot = join(workRoot, "Local App Data");
 const installDirectory = join(dataRoot, "DevDock");
 await mkdir(dataRoot);
@@ -234,9 +236,11 @@ try {
     check("the installed engine starts on the bundled Node.js and pairs");
   } else {
     const debugPort = 9400 + Math.floor(Math.random() * 400);
+    const shellLog = join(workRoot, "shell.log");
     app = spawn(appPath, [], {
       env: {
         ...userEnvironment,
+        DEVDOCK_SHELL_LOG: shellLog,
         WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort}`,
       },
       stdio: ["ignore", "ignore", "pipe"],
@@ -245,12 +249,22 @@ try {
     app.stderr.on("data", (chunk) => {
       appStderr = (appStderr + chunk).slice(-8_000);
     });
+    // What a stuck app shows: its startup trace, its top-level windows (a modal error dialog would
+    // appear here), and the processes running from the install folder.
     const diagnostics = () =>
-      JSON.stringify({
-        exitCode: app.exitCode,
-        stderr: appStderr,
-        processes: processesUnder(installDirectory),
-      });
+      JSON.stringify(
+        {
+          exitCode: app.exitCode,
+          stderr: appStderr,
+          shellLog: existsSync(shellLog) ? readFileSync(shellLog, "utf8") : null,
+          windows: powershell(
+            `Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and ($_.Id -eq ${app.pid} -or $_.ProcessName -like 'msedgewebview2*') } | ForEach-Object { "$($_.ProcessName) $($_.Id): $($_.MainWindowTitle)" }`,
+          ),
+          processes: processesUnder(installDirectory),
+        },
+        null,
+        2,
+      );
     const started = Date.now();
     for (;;) {
       try {

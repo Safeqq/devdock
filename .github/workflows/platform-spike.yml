@@ -75,3 +75,8 @@ jobs:
           if (Test-Path $key) { "WebView2 $((Get-ItemProperty $key).pv)" } else { "WebView2 missing" }
       - name: Install, run the installed engine, and uninstall
         run: npm run desktop:verify-installer -- --engine-only
+      # Diagnostic only until the window opens on this runner: prints the shell's startup trace,
+      # its windows, and its processes when the window does not appear.
+      - name: Try the installed app's window
+        continue-on-error: true
+        run: npm run desktop:verify-installer

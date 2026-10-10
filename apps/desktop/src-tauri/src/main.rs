@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod sidecar;
+mod startup_log;
 
 use sidecar::{Launch, RuntimeSummary, Sidecar, SidecarEvent};
 use tauri::ipc::CapabilityBuilder;
@@ -84,6 +85,7 @@ fn show_main_window(app: &AppHandle) {
 /// Replaces the dashboard with a local page explaining why DevDock cannot run, offering to retry
 /// or close.
 fn show_error(app: &AppHandle, message: &str) {
+    startup_log::note(format!("error window: {message}"));
     if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
         let _ = window.destroy();
     }
@@ -261,6 +263,11 @@ fn open_dashboard(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         });
     };
     let launch = Launch::resolve(app.path().resource_dir().ok().as_deref());
+    startup_log::note(format!(
+        "starting engine: {} {}",
+        launch.node.display(),
+        launch.entry.display()
+    ));
     let (sidecar, ready) = Sidecar::start(launch, on_event, move || {
         let handle = exit_handle.clone();
         let _ = exit_handle.run_on_main_thread(move || {
@@ -271,6 +278,7 @@ fn open_dashboard(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         });
     })?;
     app.manage(sidecar);
+    startup_log::note(format!("engine ready at {}", ready.origin));
     let origin = Url::parse(&ready.origin)?;
 
     // Native features are granted only to the exact daemon origin, decided at runtime because the
@@ -302,6 +310,7 @@ fn open_dashboard(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         // Keep the window on the daemon's dashboard; anything else is refused.
         .on_navigation(move |url| url.origin() == allowed_origin)
         .build()?;
+    startup_log::note("main window created");
     // Closing the window keeps DevDock and its services running in the tray.
     let hide_target = window.clone();
     window.on_window_event(move |event| {
@@ -314,6 +323,10 @@ fn open_dashboard(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn main() {
+    startup_log::note(format!(
+        "shell starting, version {}",
+        env!("CARGO_PKG_VERSION")
+    ));
     let app = tauri::Builder::default()
         // Must be registered first: a second launch hands its arguments to this instance and exits.
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -333,12 +346,14 @@ fn main() {
             open_folder
         ])
         .setup(|app| {
+            startup_log::note("setup");
             // `--quit` with no running instance has nothing to stop.
             if std::env::args().any(|argument| argument == QUIT_ARGUMENT) {
                 app.handle().exit(0);
                 return Ok(());
             }
             build_tray(app.handle())?;
+            startup_log::note("tray created");
             if let Err(error) = open_dashboard(app.handle()) {
                 show_error(app.handle(), &error.to_string());
             }
@@ -352,7 +367,9 @@ fn main() {
         RunEvent::ExitRequested {
             code: None, api, ..
         } => api.prevent_exit(),
+        RunEvent::Ready => startup_log::note("event loop ready"),
         RunEvent::Exit => {
+            startup_log::note("exit");
             if let Some(sidecar) = handle.try_state::<Sidecar>() {
                 sidecar.stop();
             }

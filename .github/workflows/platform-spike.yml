@@ -42,3 +42,28 @@ jobs:
       - run: npm run package:licenses
       - run: npm run verify:licenses
       - run: npm run test:browser
+
+  desktop-installer:
+    name: Desktop installer (windows-2025)
+    runs-on: windows-2025
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Install the pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup default 1.95.0
+          rustc --version
+      - run: npm ci --no-audit --no-fund
+      - run: npm run check:toolchain
+      - run: npm run check:versions
+      - name: Build the installer
+        run: npm run desktop:bundle
+      - name: Install, launch, and uninstall
+        run: npm run desktop:verify-installer

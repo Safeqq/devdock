@@ -1,6 +1,6 @@
 {
   "name": "@devdock/web",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@devdock/contracts": "0.1.0"
+    "@devdock/contracts": "0.2.0"
   },
   "devDependencies": {
     "@fontsource-variable/libre-franklin": "5.3.0",

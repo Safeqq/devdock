@@ -1,6 +1,6 @@
 {
   "name": "devdock",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Local dashboard for developer services",
@@ -71,7 +71,7 @@
     "desktop:verify-installer": "node scripts/verify-desktop-installer.mjs"
   },
   "dependencies": {
-    "@devdock/daemon": "0.1.0"
+    "@devdock/daemon": "0.2.0"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",

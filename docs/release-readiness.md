@@ -1,5 +1,35 @@
 # Release Readiness
 
+## 0.2.0 candidate (2026-10-11)
+
+0.2.0 adds the Windows desktop app. The candidate was prepared with `npm run release:version -- 0.2.0 --date 2026-10-11 --write`, which changed the six manifests, the lockfile, the desktop crate's `Cargo.toml`, `Cargo.lock`, and `tauri.conf.json`, the README artifact names, and the changelog heading.
+
+On Windows 11 x64 with Node.js 24.21.0, npm 11.19.0, and Rust 1.95.0, every gate passed on the candidate tree:
+
+- **`npm run verify:release`:**
+  - Lint across 138 files, 74 unit tests, 25 integration tests with one POSIX-only skip, and 4 browser tests.
+  - Clean setup of 221 files, plus packaging, artifact, fresh-repack, SBOM, and license-inventory checks.
+- **`npm run verify:candidate -- --target repository`:** READY.
+- **`npm run desktop:bundle`:** built the installer and its checksum, with notices for 246 Rust crates and 77 npm packages.
+- **`npm run desktop:verify-installer`:** passed in all three modes (window 6/6, `--engine-only` 7/7, `--shell-only` 4/4).
+- **`npm run desktop:verify`:** passed 21/21.
+
+| Asset | Bytes | SHA-256 |
+| --- | --- | --- |
+| `DevDock_0.2.0_x64-setup.exe` | 30,422,586 | `75c980bfab6063d23951f868b7737eafae29059fc297390999ea5376bfb3063c` |
+| `devdock-0.2.0.tgz` (3,457 entries) | 4,778,995 | `25a7f8e03234686bba8fb40e285026c47d3dc30b1e7368be251692dea273e8d9` |
+| `devdock-0.2.0.cdx.json` (76 components) | | `7da8a75255eb5b32ed828b74f38b13448277cf0bb41002acdd2b365bd12c63ff` |
+| `devdock-0.2.0.licenses.json` | | `8d007d62d6e6cbeefd970cd242ba4629058a5c9ce2ebc9eff5dcf2e3f1f1018c` |
+
+Known limits of this release:
+
+- The installer is not code-signed, so SmartScreen warns on first run.
+- The desktop app is Windows x64 only.
+- The installer is not byte-reproducible. Only the npm tarball is.
+- CI drives the installed app's page only locally, because the WebView2 DevTools port does not open on the GitHub runner. CI does check the installed engine and the app's startup and uninstall.
+
+## 0.1.0 audit
+
 Audit date: 2026-10-09
 
 DevDock has completed the implementation and verification gates in phases 0–7. The latest full native matrix passed at the 0.1.0 release commit `3d5c631` in [workflow 37879194878](https://github.com/Safeqq/devdock/actions/runs/37879194878), including build, typecheck, lint, unit, integration, installed-package lifecycle, reproducible packaging, artifact and fresh-repack verification, SBOM, license inventory, and browser tests on Windows Server 2025 x64, macOS 15 arm64, and Ubuntu 24.04 x64.

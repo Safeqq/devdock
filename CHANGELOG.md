@@ -4,6 +4,8 @@ All notable changes to DevDock will be documented in this file.
 
 ## Unreleased
 
+## 0.2.0 - 2026-10-11
+
 ### Added
 
 - A stdin control channel for running the daemon as a desktop sidecar: a parent can request shutdown or a fresh pairing code, and the daemon shuts down when the parent's pipe closes or the parent crashes.
